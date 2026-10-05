@@ -1,0 +1,2089 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Super Mario Bros. — Banana Boomerang</title>
+<style>
+  html,body{margin:0;height:100%;background:#000;color:#e8e8e8;
+    font:12px/1.5 "Courier New",monospace;overflow:hidden}
+  #wrap{position:absolute;inset:0;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;gap:10px}
+  canvas{image-rendering:pixelated;image-rendering:crisp-edges;
+    background:#5c94fc;box-shadow:0 0 0 3px #222,0 8px 40px #000}
+  #help{opacity:.55;text-align:center;letter-spacing:.5px}
+  b{color:#fc9838}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="c" width="256" height="240"></canvas>
+  <div id="help">
+    <b>&larr; &rarr;</b> move &nbsp; <b>Space / &uarr;</b> jump &nbsp;
+    <b>Shift / Z</b> run &amp; fireball &nbsp; <b>X</b> throw banana &nbsp;
+    <b>C</b> lob dynamite &nbsp; <b>&darr;</b> crouch / enter pipe &nbsp;
+    <b>R</b> restart<br>
+    grab the <b>wings</b>, then <b>hold F</b> to fly &mdash; as long as you hold it<br>
+    bombers overhead? <b>hold U</b> (or <b>E</b>) for the <b>umbrella</b> &mdash; it swats
+    their bombs away and doubles as a parachute<br>
+    special: <b>&darr;</b> then <b>&larr;/&rarr;</b> then <b>B</b> &mdash; an energy beam that
+    clears everything on that line (needs a full <b>KI</b> meter)
+  </div>
+</div>
+<script>
+"use strict";
+/* =====================================================================
+   Super Mario Bros. — Banana Boomerang & Wings (World 1-1)
+   A from-scratch recreation: tile world, SMB-flavoured physics, enemies,
+   power-ups, breakable bricks, the warp pipe to the coin room, flagpole.
+
+   New in this version: press X to hurl a banana.  It flies out spinning,
+   loses speed, swings back like a boomerang and homes in on Mario, who
+   catches it to reload.  Any enemy it touches is knocked out, and a single
+   throw that clears several of them scores a rising combo.  Two bananas
+   can be in the air at once and they pass straight over the terrain.
+
+   Also new: press C to lob a stick of dynamite.  It arcs up over Mario's
+   head, falls back down, bounces once and blows — clearing every enemy in
+   the blast, shattering bricks and popping open ? blocks.  Stand too close
+   and it hurts Mario too, so throw it and back off.
+
+   And: a pair of wings hides in two blocks.  Collect them and holding F
+   beats the wings and lifts Mario into the sky — from the ground or from
+   mid-air — for as long as the key is held.  Let go and he glides back down.
+   Winged Mario always floats down gently, and the wings take the next hit
+   for him.  Set FLY_UNLIMITED to false below for the metered version, where
+   each take-off is worth FLY_RANGE pixels of travel and landing reloads it.
+
+   And the sky is no longer empty: bomber planes patrol above the rooftops,
+   hunting Mario and letting a bomb go whenever they line up over him.  Hold
+   U (or E) to raise his umbrella — a bomb that lands on the canopy is swatted
+   clear and becomes his, blowing up enemies without touching him — and the
+   open canopy doubles as a parachute.  Both hands are on the handle while it
+   is up, so no running and nothing to throw.  Jump on a plane to down it.
+
+   And he has a special, entered as a fighting-game motion rather than on a
+   button of its own: tap down, then the way he should fire, then B — the
+   same Down-Forward-Punch that freezes people in Mortal Kombat.  He plants
+   his feet, gathers a ball of light in both hands and lets go a beam that
+   crosses the screen and destroys every enemy on that horizontal line, with
+   the score climbing for each one it takes.  It costs the whole KI meter
+   under the score, which refills over about five seconds.
+   ===================================================================== */
+
+const T = 16;            // tile size
+const VW = 256, VH = 240; // NES viewport
+const ROWS = 15;         // tile rows per screen
+
+/* ------------------------------------------------------------------ tiles */
+const EMPTY=0, GROUND=1, BRICK=2, QBLOCK=3, USED=4, STONE=5,
+      PIPE_TL=6, PIPE_TR=7, PIPE_L=8, PIPE_R=9,
+      PIPE_MT=10, PIPE_MB=11, PIPE_HT=12, PIPE_HB=13,
+      INVIS=14, COIN_T=15, BRICK_UG=16, GROUND_UG=17, POLE=18, POLE_TOP=19;
+
+const SOLID = new Set([GROUND,BRICK,QBLOCK,USED,STONE,
+  PIPE_TL,PIPE_TR,PIPE_L,PIPE_R,PIPE_MT,PIPE_MB,PIPE_HT,PIPE_HB,
+  BRICK_UG,GROUND_UG]);
+const BUMPABLE = new Set([BRICK,QBLOCK,INVIS,BRICK_UG]);
+
+/* ------------------------------------------------------------------ world */
+function blankWorld(w,h,theme){
+  return {w,h,theme,tiles:new Uint8Array(w*h),contents:new Map(),
+          warpDown:new Map(),warpRight:new Map(),enemies:[],
+          flagX:0,castleX:0};
+}
+const key = (x,y)=>x+","+y;
+
+function set(wd,x,y,t){ if(x>=0&&x<wd.w&&y>=0&&y<wd.h) wd.tiles[y*wd.w+x]=t; }
+function get(wd,x,y){
+  if(x<0||x>=wd.w||y<0) return EMPTY;
+  if(y>=wd.h) return EMPTY;
+  return wd.tiles[y*wd.w+x];
+}
+function fill(wd,x0,x1,y0,y1,t){
+  for(let y=y0;y<=y1;y++) for(let x=x0;x<=x1;x++) set(wd,x,y,t);
+}
+/* vertical pipe: top-left corner at (x,y), height h tiles */
+function pipe(wd,x,y,h){
+  set(wd,x,y,PIPE_TL); set(wd,x+1,y,PIPE_TR);
+  for(let i=1;i<h;i++){ set(wd,x,y+i,PIPE_L); set(wd,x+1,y+i,PIPE_R); }
+}
+/* staircase of STONE blocks; dir +1 ascending, -1 descending */
+function stairs(wd,x,groundY,n,dir){
+  for(let i=0;i<n;i++){
+    const h = dir>0 ? i+1 : n-i;
+    for(let j=0;j<h;j++) set(wd,x+i,groundY-j,STONE);
+  }
+}
+
+/* ------------------------------------------------------- level 1-1 layout */
+function makeOverworld(){
+  const wd = blankWorld(212,ROWS,"over");
+  const G = 13;                                  // top row of the ground
+
+  // ground, with the three pits
+  const spans=[[0,68],[71,85],[89,152],[155,211]];
+  for(const [a,b] of spans) fill(wd,a,b,G,14,GROUND);
+
+  // ---- opening question block
+  set(wd,16,9,QBLOCK);
+
+  // ---- the famous five-block row + high block
+  set(wd,20,9,BRICK);
+  set(wd,21,9,QBLOCK); wd.contents.set(key(21,9),{item:"power"});
+  set(wd,22,9,BRICK);
+  set(wd,23,9,QBLOCK);
+  set(wd,24,9,BRICK);
+  set(wd,22,5,QBLOCK); wd.contents.set(key(22,5),{item:"wing"});
+
+  // ---- pipes (the fourth one warps to the coin room)
+  pipe(wd,28,11,2);
+  pipe(wd,38,10,3);
+  pipe(wd,46,9,4);
+  pipe(wd,57,9,4);
+  wd.warpDown.set(key(57,9),"bonus");
+  wd.warpDown.set(key(58,9),"bonus");
+
+  // ---- hidden 1-up block, on a long flat stretch so the mushroom
+  //      has room to walk instead of dropping into a pit
+  set(wd,105,9,INVIS); wd.contents.set(key(105,9),{item:"1up"});
+
+  // ---- after the first pit: bricks with the star
+  set(wd,77,9,BRICK);
+  set(wd,78,9,BRICK); wd.contents.set(key(78,9),{item:"star"});
+  set(wd,79,9,BRICK);
+
+  // ---- long high brick shelf, one of them a coin stash
+  for(let x=80;x<=87;x++) set(wd,x,5,BRICK);
+  wd.contents.set(key(83,5),{item:"coins",count:10});
+
+  // ---- across the second pit
+  set(wd,91,5,BRICK);
+  set(wd,92,5,QBLOCK); wd.contents.set(key(92,5),{item:"wing"});
+  set(wd,93,5,BRICK);
+  set(wd,94,9,QBLOCK);
+
+  // ---- double brick cluster
+  set(wd,100,9,BRICK); set(wd,101,9,BRICK);
+  set(wd,101,5,BRICK); set(wd,102,5,BRICK);
+  set(wd,106,9,QBLOCK); wd.contents.set(key(106,9),{item:"power"});
+  for(let x=109;x<=111;x++) set(wd,x,5,BRICK);
+  set(wd,110,9,BRICK);
+
+  // ---- coin blocks over the koopa stretch
+  set(wd,118,9,QBLOCK);
+  set(wd,121,5,BRICK); set(wd,122,5,QBLOCK); set(wd,123,5,BRICK);
+  set(wd,128,9,BRICK); set(wd,129,9,BRICK);
+
+  // ---- the four pyramids
+  stairs(wd,134,12,4,+1);
+  stairs(wd,140,12,4,-1);
+  stairs(wd,148,12,5,+1);          // ends flush at the pit edge
+  stairs(wd,155,12,4,-1);
+
+  // ---- return pipe from the coin room
+  pipe(wd,163,11,2);
+
+  // ---- last brick trio and pipe
+  for(let x=168;x<=170;x++) set(wd,x,9,BRICK);
+  pipe(wd,179,11,2);
+
+  // ---- final staircase
+  stairs(wd,181,12,8,+1);
+
+  // ---- flagpole
+  const fx = 198; wd.flagX = fx;
+  set(wd,fx,12,STONE);
+  set(wd,fx,3,POLE_TOP);
+  for(let y=4;y<=11;y++) set(wd,fx,y,POLE);
+  wd.castleX = 202;
+
+  // ---- enemies (spawn as the camera reaches them)
+  const E=(x,y,t)=>wd.enemies.push({tx:x,ty:y,type:t,spawned:false});
+  E(22,12,"goomba");
+  E(40,12,"goomba");
+  E(51,12,"goomba"); E(53,12,"goomba");
+  E(80,12,"goomba"); E(82,12,"goomba");
+  E(97,12,"goomba"); E(99,12,"goomba");
+  E(107,12,"koopa");
+  E(114,12,"goomba"); E(116,12,"goomba");
+  E(124,12,"goomba"); E(126,12,"goomba");
+  E(131,12,"koopa");
+  E(169,12,"goomba"); E(171,12,"goomba");
+
+  // ---- bomber planes, patrolling well above the brick shelves
+  E(62,3,"plane");
+  E(112,2,"plane");
+  E(165,3,"plane");
+  return wd;
+}
+
+/* ------------------------------------------------------ the coin room 1-1 */
+function makeBonus(){
+  const wd = blankWorld(24,ROWS,"under");
+  fill(wd,0,23,13,14,GROUND_UG);       // floor
+  fill(wd,0,23,0,1,BRICK_UG);          // ceiling
+  fill(wd,0,1,2,12,BRICK_UG);          // left wall
+  fill(wd,22,23,2,12,BRICK_UG);        // right wall the pipe runs into
+  // three rows of coins: the bottom row is collected just by walking
+  for(let y=10;y<=12;y++) for(let x=4;x<=14;x++) set(wd,x,y,COIN_T);
+  // horizontal exit pipe on the right
+  set(wd,20,11,PIPE_MT); set(wd,20,12,PIPE_MB);
+  set(wd,21,11,PIPE_HT); set(wd,21,12,PIPE_HB);
+  wd.warpRight.set(key(20,12),"over");
+  return wd;
+}
+
+/* --------------------------------------------------------------- graphics */
+const c = document.getElementById("c");
+const ctx = c.getContext("2d");
+ctx.imageSmoothingEnabled = false;
+
+function fitCanvas(){
+  const s = Math.max(1,Math.min(Math.floor((innerWidth-24)/VW),
+                                Math.floor((innerHeight-90)/VH)));
+  c.style.width = VW*s+"px"; c.style.height = VH*s+"px";
+}
+addEventListener("resize",fitCanvas); fitCanvas();
+
+const R = (x,y,w,h,col)=>{ ctx.fillStyle=col; ctx.fillRect(x|0,y|0,w|0,h|0); };
+
+const PAL = {
+  over:{sky:"#5c94fc",g1:"#e09030",g2:"#a04000",g3:"#000000",hi:"#fcd8a8",
+        br1:"#e09030",br2:"#a04000",st1:"#e09030",st2:"#a04000",
+        pipe1:"#80d010",pipe2:"#00a800",pipe3:"#004000"},
+  under:{sky:"#000000",g1:"#3cbcfc",g2:"#0058f8",g3:"#000000",hi:"#bcfcfc",
+        br1:"#3cbcfc",br2:"#0058f8",st1:"#3cbcfc",st2:"#0058f8",
+        pipe1:"#80d010",pipe2:"#00a800",pipe3:"#004000"}
+};
+
+function drawTile(t,x,y,p,frame){
+  switch(t){
+    case GROUND: case GROUND_UG: {
+      R(x,y,T,T,p.g1);
+      R(x,y,T,2,p.hi); R(x,y,2,T,p.hi);          // lit top and left edges
+      R(x,y+T-2,T,2,p.g3); R(x+T-2,y,2,T,p.g3);  // shaded bottom and right
+      R(x+2,y+2,3,3,p.g2); R(x+11,y+2,3,3,p.g2); // the little dark specks
+      R(x+6,y+7,4,3,p.g2);
+      R(x+2,y+11,3,2,p.g2); R(x+11,y+11,3,2,p.g2);
+      break;
+    }
+    case BRICK: case BRICK_UG: {
+      R(x,y,T,T,p.br2); R(x+1,y+1,T-2,3,p.br1);
+      R(x+1,y+5,6,3,p.br1); R(x+9,y+5,6,3,p.br1);
+      R(x+1,y+9,T-2,3,p.br1);
+      R(x+1,y+13,6,2,p.br1); R(x+9,y+13,6,2,p.br1);
+      break;
+    }
+    case QBLOCK: {
+      const blink = [0,0,0,1,1,2,1][(frame>>3)%7];
+      const face = ["#fca044","#e08020","#a04000"][blink];
+      R(x,y,T,T,"#000"); R(x+1,y+1,T-2,T-2,face);
+      R(x+1,y+1,T-2,2,"#fcd8a8");
+      for(const [dx,dy] of [[2,2],[12,2],[2,12],[12,12]]) R(x+dx,y+dy,2,2,"#000");
+      // question mark
+      R(x+6,y+4,4,2,"#000"); R(x+9,y+5,2,3,"#000");
+      R(x+7,y+7,3,2,"#000"); R(x+7,y+9,2,2,"#000"); R(x+7,y+12,2,2,"#000");
+      break;
+    }
+    case USED: case STONE: {
+      R(x,y,T,T,"#000"); R(x+1,y+1,T-2,T-2,p.st1);
+      R(x+2,y+2,T-4,T-5,p.st2); R(x+3,y+3,T-6,T-7,p.st1);
+      break;
+    }
+    case PIPE_TL: R(x,y,T,T,p.pipe2), R(x,y,2,T,p.pipe3), R(x+2,y,3,T,p.pipe1),
+                  R(x,y,T,2,p.pipe3), R(x,y+2,T,2,p.pipe1); break;
+    case PIPE_TR: R(x,y,T,T,p.pipe2), R(x+T-2,y,2,T,p.pipe3), R(x+2,y,3,T,p.pipe1),
+                  R(x,y,T,2,p.pipe3), R(x,y+2,T,2,p.pipe1); break;
+    case PIPE_L:  R(x,y,T,T,p.pipe2), R(x,y,2,T,p.pipe3), R(x+4,y,3,T,p.pipe1),
+                  R(x+T-1,y,1,T,p.pipe3); break;
+    case PIPE_R:  R(x,y,T,T,p.pipe2), R(x+T-2,y,2,T,p.pipe3), R(x+2,y,3,T,p.pipe1),
+                  R(x,y,1,T,p.pipe3); break;
+    case PIPE_MT: R(x,y,T,T,p.pipe2), R(x,y,T,2,p.pipe3), R(x,y+2,T,3,p.pipe1),
+                  R(x,y,2,T,p.pipe3); break;
+    case PIPE_MB: R(x,y,T,T,p.pipe2), R(x,y+T-2,T,2,p.pipe3), R(x,y,T,3,p.pipe1),
+                  R(x,y,2,T,p.pipe3); break;
+    case PIPE_HT: R(x,y,T,T,p.pipe2), R(x,y,T,2,p.pipe3), R(x,y+2,T,3,p.pipe1); break;
+    case PIPE_HB: R(x,y,T,T,p.pipe2), R(x,y+T-2,T,2,p.pipe3), R(x,y,T,3,p.pipe1); break;
+    case POLE:    R(x+7,y,3,T,"#00a800"); R(x+7,y,1,T,"#80d010"); break;
+    case POLE_TOP:R(x+7,y+6,3,10,"#00a800"); R(x+7,y+6,1,10,"#80d010");
+                  R(x+5,y+1,6,6,"#00e800"); R(x+6,y+2,4,4,"#80d010"); break;
+    case COIN_T:  drawCoinSprite(x+4,y+2,frame); break;
+  }
+}
+
+function drawCoinSprite(x,y,frame){
+  const f=(frame>>3)%4, w=[8,5,2,5][f], ox=(8-w)>>1;
+  R(x+ox,y+1,w,10,"#fcbc3c");
+  if(w>3) R(x+ox+1,y+3,Math.max(1,w-3),6,"#fce8a0");
+  R(x+ox,y,w,1,"#a04000"); R(x+ox,y+11,w,1,"#a04000");
+}
+
+/* --------------------------------------------------------- Mario graphics */
+const MPAL = {
+  small:{cap:"#d82800",skin:"#fcb058",hair:"#7c3400",shirt:"#d82800",
+         overall:"#0058f8",shoe:"#7c3400"},
+  fire :{cap:"#ffffff",skin:"#fcb058",hair:"#7c3400",shirt:"#ffffff",
+         overall:"#d82800",shoe:"#7c3400"},
+  star1:{cap:"#fcfc00",skin:"#fcfc54",hair:"#7c3400",shirt:"#fcfc00",
+         overall:"#e45c10",shoe:"#7c3400"},
+  star2:{cap:"#00a800",skin:"#b8f818",hair:"#7c3400",shirt:"#00a800",
+         overall:"#fcfc00",shoe:"#7c3400"}
+};
+
+function marioPal(m,frame){
+  if(m.star>0){
+    const seq=[MPAL.small,MPAL.star1,MPAL.star2,MPAL.fire];
+    return seq[(frame>>1)%4];
+  }
+  return m.power===2 ? MPAL.fire : MPAL.small;
+}
+
+/* draws Mario with his top-left at (x,y); h is 16 (small) or 32 (big) */
+function drawMario(m,x,y,frame){
+  const p = marioPal(m,frame);
+  const big = m.power>0;
+  const flip = m.face<0;
+  ctx.save();
+  ctx.translate(x+(flip?(big?16:16):0),y);
+  if(flip) ctx.scale(-1,1);
+  if(big) drawBigMario(m,p,frame); else drawSmallMario(m,p,frame);
+  ctx.restore();
+}
+
+function drawSmallMario(m,p,frame){
+  const s=m.anim;
+  R(2,0,11,2,p.cap); R(1,2,3,3,p.cap); R(4,2,9,3,p.cap);  // cap
+  R(4,5,9,4,p.skin);                                       // face
+  R(4,5,2,3,p.hair); R(10,5,2,3,p.hair);                   // hair + eye gap
+  R(9,6,2,2,"#000");                                       // eye
+  R(6,8,6,2,p.hair);                                       // moustache
+  if(s==="jump"){
+    R(3,9,10,4,p.shirt); R(1,8,3,3,p.skin); R(12,7,3,3,p.skin);
+    R(4,13,4,2,p.overall); R(9,12,4,3,p.overall);
+    R(3,15,4,1,p.shoe); R(9,15,5,1,p.shoe);
+  } else if(s==="skid"){
+    R(4,9,9,4,p.shirt); R(12,9,3,3,p.skin);
+    R(4,13,8,2,p.overall); R(2,14,5,2,p.shoe); R(10,14,4,2,p.shoe);
+  } else if(s==="cast"){                                   // both hands out
+    R(4,9,9,4,p.shirt);
+    R(12,9,5,2,p.skin); R(12,11,5,2,p.skin);
+    R(4,13,8,2,p.overall);
+    R(1,14,5,2,p.shoe); R(9,14,5,2,p.shoe);                // braced wide
+  } else {
+    R(3,9,10,3,p.shirt);
+    R(1,10,3,3,p.skin); R(12,10,3,3,p.skin);               // arms
+    R(4,12,8,2,p.overall);
+    R(6,9,4,4,p.overall); R(5,11,1,1,"#fcd8a8"); R(10,11,1,1,"#fcd8a8");
+    const w=(s==="walk")?(frame>>2)%3:0;
+    if(w===0){ R(3,14,4,2,p.shoe); R(9,14,4,2,p.shoe); }
+    else if(w===1){ R(5,14,6,2,p.shoe); R(2,13,3,2,p.overall); }
+    else { R(2,14,5,2,p.shoe); R(10,13,4,2,p.shoe); }
+  }
+}
+
+function drawBigMario(m,p,frame){
+  const s=m.anim;
+  if(s==="crouch"){
+    R(3,6,11,3,p.cap); R(2,9,3,3,p.cap); R(5,9,9,3,p.cap);
+    R(5,12,8,4,p.skin); R(5,12,2,3,p.hair); R(10,12,2,3,p.hair);
+    R(10,13,2,2,"#000"); R(7,15,5,2,p.hair);
+    R(3,17,11,5,p.shirt); R(1,17,3,4,p.skin); R(13,17,3,4,p.skin);
+    R(4,21,9,6,p.overall); R(3,27,5,3,p.shoe); R(9,27,5,3,p.shoe);
+    return;
+  }
+  // head
+  R(4,0,9,2,p.cap); R(2,2,13,3,p.cap);
+  R(5,5,8,6,p.skin);
+  R(4,5,3,4,p.hair); R(11,4,2,3,p.hair);
+  R(11,6,2,3,"#000");
+  R(7,9,6,2,p.hair); R(13,7,2,3,p.skin);
+  if(s==="jump"){
+    R(4,11,10,7,p.shirt);
+    R(1,9,4,4,p.skin); R(13,8,3,4,p.skin);                 // raised arms
+    R(4,18,10,6,p.overall);
+    R(5,24,3,4,p.overall); R(10,23,4,5,p.overall);
+    R(4,28,5,3,p.shoe); R(10,27,6,3,p.shoe);
+    R(6,12,5,6,p.overall); R(5,14,1,1,"#fcd8a8"); R(11,14,1,1,"#fcd8a8");
+  } else if(s==="skid"){
+    R(4,11,10,7,p.shirt); R(13,12,4,4,p.skin);
+    R(4,18,9,7,p.overall); R(2,25,6,4,p.shoe); R(9,25,7,4,p.shoe);
+  } else if(s==="cast"){                                   // both hands out
+    R(4,11,10,7,p.shirt);
+    R(13,12,6,3,p.skin); R(13,15,6,3,p.skin);
+    R(4,18,9,7,p.overall);
+    R(1,25,6,4,p.shoe); R(9,25,7,4,p.shoe);                // braced wide
+  } else {
+    R(4,11,10,6,p.shirt);
+    R(1,12,4,5,p.skin); R(13,12,4,5,p.skin);
+    R(5,17,9,5,p.overall);
+    R(6,11,5,7,p.overall); R(5,14,1,1,"#fcd8a8"); R(11,14,1,1,"#fcd8a8");
+    const w=(s==="walk")?(frame>>2)%3:0;
+    if(w===0){ R(5,22,4,6,p.overall); R(10,22,4,6,p.overall);
+               R(4,28,5,3,p.shoe); R(10,28,5,3,p.shoe); }
+    else if(w===1){ R(6,22,6,6,p.overall); R(5,28,8,3,p.shoe);
+                    R(2,20,4,3,p.overall); }
+    else { R(4,22,4,6,p.overall); R(10,21,5,6,p.overall);
+           R(2,28,6,3,p.shoe); R(10,27,6,3,p.shoe); }
+  }
+}
+
+/* ------------------------------------------------------ enemy / item art */
+function drawGoomba(e,x,y,frame){
+  if(e.state==="squashed"){
+    R(x+1,y+10,14,6,"#a04000"); R(x+3,y+11,10,3,"#e09030");
+    return;
+  }
+  const step=(frame>>3)&1;
+  const flip = e.state==="flipped";
+  ctx.save(); ctx.translate(x,y); if(flip){ ctx.translate(0,16); ctx.scale(1,-1); }
+  R(3,0,10,2,"#a04000"); R(1,2,14,7,"#a04000");
+  R(3,3,4,4,"#fff"); R(9,3,4,4,"#fff");
+  R(4,4,2,3,"#000"); R(10,4,2,3,"#000");
+  R(2,2,3,2,"#7c3400"); R(11,2,3,2,"#7c3400");
+  R(1,9,14,3,"#e09030"); R(2,12,12,2,"#000");
+  if(step){ R(0,14,6,2,"#f8b060"); R(10,14,6,2,"#f8b060"); }
+  else { R(2,14,5,2,"#f8b060"); R(9,14,5,2,"#f8b060"); }
+  ctx.restore();
+}
+
+function drawKoopa(e,x,y,frame){
+  if(e.state==="shell"||e.state==="sliding"){
+    const spin = e.state==="sliding" ? (frame>>2)%4 : 0;
+    R(x+1,y+4,14,11,"#00a800"); R(x+2,y+3,12,2,"#00a800");
+    R(x+2,y+5,12,8,"#80d010");
+    for(let i=0;i<3;i++) R(x+3+((i*4+spin*2)%10),y+7,3,3,"#00a800");
+    R(x+1,y+14,14,2,"#fcfc54");
+    return;
+  }
+  const step=(frame>>3)&1;
+  ctx.save(); ctx.translate(x,y);
+  if(e.state==="flipped"){ ctx.translate(0,24); ctx.scale(1,-1); }
+  R(9,0,6,7,"#00a800");  R(10,1,5,5,"#b8f818");           // head
+  R(12,2,2,2,"#000");                                      // eye
+  R(9,5,5,2,"#fcfc54");                                    // beak
+  R(1,6,12,12,"#00a800"); R(2,8,10,8,"#80d010");           // shell
+  for(let i=0;i<3;i++) R(3+i*3,10,2,4,"#007800");
+  R(11,15,4,3,"#fcfc54");                                  // tail side
+  if(step){ R(2,18,5,3,"#fcfc54"); R(9,18,5,3,"#fcfc54"); }
+  else { R(3,18,4,3,"#fcfc54"); R(8,18,6,3,"#fcfc54"); }
+  ctx.restore();
+}
+
+function drawMushroom(x,y,oneUp){
+  const cap = oneUp?"#00a800":"#d82800";
+  R(x+2,y+1,12,3,cap); R(x+1,y+3,14,5,cap);
+  R(x+3,y+2,3,3,"#fff"); R(x+10,y+2,3,3,"#fff"); R(x+6,y+5,4,3,"#fff");
+  R(x+1,y+1,2,2,"#000"); R(x+13,y+1,2,2,"#000");
+  R(x+3,y+8,10,7,"#fcd8a8"); R(x+3,y+8,10,1,"#000");
+  R(x+4,y+10,2,3,"#000"); R(x+10,y+10,2,3,"#000");
+}
+
+function drawFlower(x,y,frame){
+  const f=(frame>>3)%4;
+  const cols=["#d82800","#fcfc00","#00a800","#fcfc00"];
+  R(x+5,y+9,6,7,"#00a800"); R(x+1,y+11,5,3,"#80d010"); R(x+10,y+12,5,3,"#80d010");
+  R(x+4,y+1,8,7,cols[f]); R(x+3,y+2,10,5,cols[f]);
+  R(x+6,y+3,4,3,"#fff"); R(x+7,y+4,2,1,"#000");
+  R(x+5,y+0,6,1,cols[(f+1)%4]);
+}
+
+function drawStar(x,y,frame){
+  const f=(frame>>2)%4, col=["#fcfc00","#fce8a0","#fc9838","#fcfc00"][f];
+  R(x+6,y+0,4,4,col); R(x+4,y+3,8,4,col); R(x+1,y+5,14,4,col);
+  R(x+3,y+9,10,3,col); R(x+2,y+12,4,4,col); R(x+10,y+12,4,4,col);
+  R(x+5,y+6,2,2,"#000"); R(x+9,y+6,2,2,"#000");
+}
+
+function drawFireball(x,y,frame){
+  const f=(frame>>1)%4;
+  R(x+1,y+1,6,6,"#e45c10");
+  R(x+2+((f&1)?1:0),y+2,4,4,"#fcfc00");
+  R(x,y+3,1,2,"#d82800"); R(x+7,y+3,1,2,"#d82800");
+}
+
+/* a spinning crescent — the boomerang banana */
+function drawBanana(x,y,spin){
+  ctx.save();
+  ctx.translate(x+5,y+5);
+  ctx.rotate(spin);
+  // crescent body: outer arc, inner arc scooped back out
+  ctx.beginPath();
+  ctx.arc(0, 1, 6.2, Math.PI*0.12, Math.PI*0.88);
+  ctx.arc(0,-1.6, 5.8, Math.PI*0.88, Math.PI*0.12, true);
+  ctx.closePath();
+  ctx.fillStyle="#fcd800"; ctx.fill();
+  // lighter belly + the two brown tips
+  ctx.beginPath();
+  ctx.arc(0, 0.4, 6.0, Math.PI*0.30, Math.PI*0.70);
+  ctx.arc(0,-1.4, 5.4, Math.PI*0.70, Math.PI*0.30, true);
+  ctx.closePath();
+  ctx.fillStyle="#fcfc58"; ctx.fill();
+  R(-6.4,0.2,2,2,"#7c5000"); R(4.4,0.2,2,2,"#7c5000");
+  ctx.restore();
+}
+
+/* one feathered wing, sprouting from (cx,cy); dir -1 = left, 1 = right */
+function drawWing(cx,cy,dir,up){
+  const rows = up ? [[-7,4],[-5,6],[-3,7],[-1,6]]      // raised, mid-flap
+                  : [[-1,4],[ 1,6],[ 3,7],[ 5,6]];     // swept down
+  rows.forEach(([dy,w],i)=>{
+    const x = dir>0 ? cx+2+i : cx-2-i-w;
+    R(x, cy+dy, w, 2, (i&1) ? "#e8e8e8" : "#fcfcfc");
+  });
+  R(dir>0?cx:cx-2, cy-1, 2, 4, "#c8c8c8");             // the shoulder joint
+}
+
+/* both wings on Mario's back, flapping while he climbs */
+function drawMarioWings(m,x,y,frame){
+  const big = m.power>0;
+  const cy  = y + (big?10:5);
+  const up  = m.flying ? (m.flapT>5) : !((frame>>3)&1);
+  drawWing(x+2,  cy, -1, up);
+  drawWing(x+11, cy,  1, up);
+}
+
+/* the wing power-up: a feather pair bobbing in place */
+function drawWingItem(x,y,frame){
+  const up = !((frame>>3)&1);
+  drawWing(x+6, y+7, -1, up);
+  drawWing(x+7, y+7,  1, up);
+  R(x+5,y+4,4,7,"#fc9838");                            // little body between
+  R(x+6,y+3,2,2,"#fcd800");
+}
+
+/* a stick of dynamite, tumbling end over end; flashes white near the blast */
+function drawDynamite(x,y,e){
+  const hot = e.fuse<=18 && (e.fuse>>1)&1;      // blinks faster as it runs out
+  ctx.save();
+  ctx.translate(x+4,y+6);
+  ctx.rotate(e.spin);
+  R(-3,-6,6,12, hot?"#fcfcfc":"#d82800");       // the stick
+  R(-3,-6,6,2,  hot?"#fcfcfc":"#a81000");
+  R(-3,-1,6,2,  hot?"#e8e8e8":"#fc9838");       // wrapper band
+  R(-1,-9,2,3,"#7c5000");                       // fuse
+  ctx.restore();
+  // spark on the fuse tip
+  const s=(frame>>1)&1;
+  R(x+3-s, y-4-s, 2+s*2, 2+s*2, s?"#fcfc58":"#fc9838");
+}
+
+/* expanding pixel fireball */
+function drawBoom(x,y,e){
+  const cx=x+e.w/2, cy=y+e.h/2, r=e.r;
+  const rings=[[1.00,"#fc9838"],[0.72,"#fcd800"],[0.42,"#fcfcfc"]];
+  for(const [k,col] of rings){
+    const rr=r*k;
+    if(rr<1) continue;
+    ctx.fillStyle=col;
+    // drawn as horizontal spans so it stays chunky, like the rest of the art
+    for(let dy=-rr;dy<=rr;dy+=2){
+      const half=Math.sqrt(Math.max(0,rr*rr-dy*dy));
+      if(half<1) continue;
+      ctx.fillRect((cx-half)|0,(cy+dy)|0,(half*2)|0,2);
+    }
+  }
+  // a few sparks flung outwards
+  ctx.fillStyle="#fcd800";
+  for(let i=0;i<8;i++){
+    const a=i*Math.PI/4 + e.t*0.12, d=r*1.25;
+    ctx.fillRect((cx+Math.cos(a)*d)|0,(cy+Math.sin(a)*d)|0,2,2);
+  }
+}
+
+/* the bomber: drawn nose-left, mirrored when it flies right */
+function drawPlane(e,x,y,frame){
+  ctx.save();
+  ctx.translate(x+(e.dir>0?30:0), y);
+  if(e.dir>0) ctx.scale(-1,1);
+  if(e.dying){                                   // spinning down in flames
+    ctx.translate(15,7);
+    ctx.rotate((frame-(e.crashF||frame))*0.10);
+    ctx.translate(-15,-7);
+  }
+  R(1,6,27,4,"#c8c8c8");                         // fuselage
+  R(1,9,27,2,"#787878");                         // shaded underside
+  R(0,7,3,2,"#787878");                          // nose
+  R(24,1,4,6,"#d82800"); R(21,4,7,2,"#a81000");  // tail fin + stabiliser
+  R(6,3,12,3,"#3cbcfc"); R(6,3,12,1,"#bcfcfc");  // cockpit glass
+  R(8,10,14,3,"#d82800"); R(8,12,14,1,"#a81000");// lower wing, edge-on
+  R(10,0,11,2,"#e8e8e8"); R(14,2,3,2,"#a8a8a8"); // upper wing + strut
+  const ph=(frame>>1)&1;                         // propeller, blurred by spin
+  R(-1, ph?2:5, 2, ph?12:6, ph?"#c8c8c8":"#e8e8e8");
+  R(0,6,3,4,"#fcd800");                          // spinner hub
+  if(!e.dying && e.cool<=14 && (frame>>2)&1)     // bomb-bay light, about to drop
+    R(13,12,4,2,"#fcfc58");
+  ctx.restore();
+  if(e.dying && (frame>>1)&1)                    // trail of smoke
+    R(x+(e.dir>0?26:0),y+2,4,4,"#787878");
+}
+
+/* a falling bomb; green once Mario has swatted it back */
+function drawBomb(x,y,e){
+  const dark = e.deflected ? "#00a800" : "#181818";
+  const lite = e.deflected ? "#80d010" : "#585858";
+  ctx.save();
+  ctx.translate(x+4,y+5);
+  ctx.rotate(e.spin);
+  R(-3,-5,6,8,dark);                             // casing
+  R(-3,-5,6,2,lite);
+  R(-2,3,4,3,"#787878");                         // tail boom
+  R(-4,4,2,3,"#e8e8e8"); R(2,4,2,3,"#e8e8e8");   // fins
+  R(-1,-7,2,2,"#fcd800");                        // nose cap
+  ctx.restore();
+  if(!e.deflected && (frame>>1)&1)               // whistle streak above it
+    R(x+3,y-4,2,3,"#fcfcfc");
+}
+
+/* the umbrella: canopy over Mario's head, shaft down into his hand */
+function drawUmbrella(m,x,y){
+  const g=umbGeom(m), cx=x+8, top=g.top, W=g.W;
+  if(W<4){ R(cx-1,top+4,2,g.hy-top-4,"#7c5000"); return; }   // still furled
+  // dome: chunky rows widening downwards, with thin white ribs between panels
+  for(const [dy,f] of [[0,0.40],[2,0.62],[4,0.80],[6,0.92],[8,1.00]]){
+    const half=Math.max(1,(W*f)|0), yy=top+dy;
+    R(cx-half,yy,half*2,2,"#d82800");
+    R(cx-1,yy,2,2,"#fcfcfc");
+    if(half>7){ R(cx-((half*0.6)|0),yy,2,2,"#fcfcfc");
+                R(cx+((half*0.6)|0)-1,yy,2,2,"#fcfcfc"); }
+  }
+  R(cx-W-1,top+10,W*2+2,2,"#a81000");            // rim, overhanging a touch
+  R(cx-2,top-2,4,2,"#fcd800");                   // finial
+  // shaft, leaning out towards the hand that holds it so it misses his face
+  const hx=cx+(m.face>0?4:-4), span=Math.max(2,g.hy-top-10);
+  for(let i=0;i<span;i+=2)
+    R(cx-1+Math.round((hx-cx)*(i/(span-1))), top+10+i, 2, 2, "#7c5000");
+  R(hx-1+(m.face>0?1:-2), g.hy, 3, 2, "#7c5000");   // the crook he holds
+}
+
+/* the beam: a white core inside two shells of blue, thinning as it fades */
+function drawBeam(e,camX){
+  const x0 = (e.dir>0 ? e.x0 : e.x0-e.len) - camX;
+  const fade = Math.max(0, 1 - Math.max(0,e.t-BEAM_LIFE+9)/9);
+  if(fade<=0) return;
+  const swell = 1 + 0.15*Math.sin(e.t*0.9);
+  for(const [h,col,a] of [[9,"#0058f8",0.30],[6,"#3cbcfc",0.55],
+                          [4,"#bcfcfc",0.85],[2,"#fcfcfc",1]]){
+    const hh=Math.max(1,(h*fade*swell)|0);
+    ctx.globalAlpha=a*fade;
+    R(x0, e.y-hh, e.len, hh*2, col);
+  }
+  // knots of energy travelling out along the beam
+  ctx.globalAlpha=fade;
+  for(let i=0;i<5;i++){
+    const d=((e.t*22 + i*90) % Math.max(1,e.len));
+    R(x0 + (e.dir>0?d:e.len-d) - 2, e.y-7*fade, 4, 14*fade, "#fcfcfc");
+  }
+  // muzzle flare where it leaves his hands
+  const mx=e.x0-camX, pulse=(e.t&1)?1:0.75;
+  for(const [r,col,a] of [[7,"#3cbcfc",0.30],[4,"#bcfcfc",0.55],[2,"#fcfcfc",0.9]]){
+    ctx.globalAlpha=fade*a*pulse;
+    R(mx-r, e.y-r, r*2, r*2, col);
+  }
+  ctx.globalAlpha=1;
+}
+
+/* the ball of light he gathers before it goes off */
+function drawCharge(m,x,y,frame){
+  const k = 1 - Math.max(0,(m.cast-CAST_HOLD))/CAST_WIND;   // 0 -> 1 while winding
+  const r = 2 + 6*k;
+  const cx = x + (m.face>0?16:0), cy = y + (m.power>0?15:6);
+  for(const [f,col] of [[1,"#0058f8"],[0.66,"#3cbcfc"],[0.33,"#fcfcfc"]]){
+    const rr=Math.max(1,Math.round(r*f));
+    for(let dy=-rr;dy<rr;dy+=2){                 // spans, so the orb reads round
+      const half=Math.max(1,Math.round(Math.sqrt(rr*rr-dy*dy)));
+      R(cx-half,cy+dy,half*2,2,col);
+    }
+  }
+  // sparks spiralling in
+  for(let i=0;i<4;i++){
+    const a=i*Math.PI/2 + frame*0.35, d=r+4+((frame>>1)%4);
+    R(cx+Math.cos(a)*d-1, cy+Math.sin(a)*d-1, 2, 2, "#bcfcfc");
+  }
+}
+
+/* HUD version, at a fixed size */
+function drawUmbrellaIcon(x,y,open){
+  for(const [dy,half] of [[0,2],[2,4],[4,6],[6,7]]){
+    R(x-half,y+dy,half*2,2,"#d82800");
+    R(x-1,y+dy,2,2,"#fcfcfc");
+  }
+  R(x-1,y+8,2,6,"#7c5000"); R(x-1,y+12,4,2,"#7c5000");
+  if(open) R(x-2,y-2,4,2,"#fcd800");             // finial: canopy is up
+}
+
+/* ---------------------------------------------------------------- scenery */
+/* rounded dome, like the original's hills rather than a plain triangle */
+function drawHill(x,groundY,big){
+  const w=big?80:48, h=big?36:20;
+  ctx.fillStyle="#00a800";
+  for(let i=0;i<h;i++){
+    const t=(h-1-i)/h;                        // 1 at the top, 0 at the base
+    const ww = Math.max(2, Math.round(w*Math.sqrt(Math.max(0,1-t*t))/2)*2);
+    ctx.fillRect(x+((w-ww)>>1),groundY-h+i,ww,1);
+  }
+  // the two dark tufts
+  const cx=x+(w>>1), by=groundY-1;
+  ctx.fillStyle="#004000";
+  ctx.fillRect(cx-10,by-6,4,4); ctx.fillRect(cx-12,by-4,8,4);
+  ctx.fillRect(cx+6,by-6,4,4);  ctx.fillRect(cx+4,by-4,8,4);
+  if(big){ ctx.fillRect(cx-2,by-14,4,4); ctx.fillRect(cx-4,by-12,8,4); }
+}
+function drawCloud(x,y,n){
+  ctx.fillStyle="#fff";
+  for(let i=0;i<n;i++){
+    ctx.fillRect(x+i*16+2,y+4,14,10);
+    ctx.fillRect(x+i*16+5,y,9,8);
+  }
+  ctx.fillStyle="#c0d8f8";
+  for(let i=0;i<n;i++) ctx.fillRect(x+i*16+2,y+12,14,2);
+}
+function drawBush(x,groundY,n){
+  ctx.fillStyle="#00a800";
+  for(let i=0;i<n;i++){
+    ctx.fillRect(x+i*16,groundY-8,16,8);
+    ctx.fillRect(x+i*16+3,groundY-12,10,5);
+  }
+  ctx.fillStyle="#004000";
+  for(let i=0;i<n;i++) ctx.fillRect(x+i*16,groundY-2,16,2);
+}
+const SCENERY = [
+  {t:"hill",x:0,big:true},{t:"cloud",x:8,y:40,n:1},
+  {t:"bush",x:11*T,n:3},{t:"cloud",x:19*T,y:56,n:3},
+  {t:"hill",x:16*T,big:false},{t:"cloud",x:27*T,y:40,n:1},
+  {t:"bush",x:23*T,n:1},{t:"cloud",x:36*T,y:56,n:1},
+  {t:"hill",x:32*T,big:true},{t:"bush",x:41*T,n:3},
+  {t:"cloud",x:56*T,y:40,n:1},{t:"hill",x:48*T,big:false},
+  {t:"cloud",x:67*T,y:56,n:3},{t:"bush",x:71*T,n:1},
+  {t:"hill",x:64*T,big:true},{t:"cloud",x:75*T,y:40,n:1},
+  {t:"hill",x:80*T,big:false},{t:"bush",x:89*T,n:3},
+  {t:"cloud",x:104*T,y:56,n:3},{t:"cloud",x:96*T,y:40,n:1},
+  {t:"hill",x:96*T,big:true},{t:"bush",x:107*T,n:1},
+  {t:"hill",x:112*T,big:false},{t:"cloud",x:123*T,y:40,n:1},
+  {t:"bush",x:118*T,n:3},{t:"cloud",x:132*T,y:56,n:1},
+  {t:"hill",x:128*T,big:true},{t:"cloud",x:139*T,y:40,n:1},
+  {t:"hill",x:144*T,big:false},{t:"bush",x:152*T,n:1},
+  {t:"cloud",x:155*T,y:56,n:3},{t:"hill",x:160*T,big:true},
+  {t:"bush",x:167*T,n:3},{t:"cloud",x:171*T,y:40,n:1},
+  {t:"hill",x:176*T,big:false},{t:"cloud",x:187*T,y:56,n:3},
+  {t:"bush",x:190*T,n:1},{t:"cloud",x:195*T,y:40,n:1},
+  {t:"hill",x:192*T,big:true},{t:"bush",x:206*T,n:3}
+];
+
+function drawCastle(x,groundY){
+  const C="#e09030", D="#a04000", K="#000", y=groundY-80;
+  const merlons=(bx,by,n)=>{ for(let i=0;i<n;i++) R(bx+i*8,by,5,6,C); };
+  // main body
+  R(x,y+40,80,40,C);
+  merlons(x+1,y+34,10);
+  // three towers standing on the body
+  R(x+8,y+16,16,24,C);  merlons(x+9,y+10,2);
+  R(x+56,y+16,16,24,C); merlons(x+57,y+10,2);
+  R(x+32,y+8,16,32,C);  merlons(x+33,y+2,2);
+  // brick courses
+  ctx.fillStyle=D;
+  for(let yy=y+42, row=0; yy<y+80; yy+=6, row++)
+    for(let xx=x; xx<x+80; xx+=8) ctx.fillRect(xx+(row&1?4:0),yy,6,1);
+  // arched doorway
+  R(x+34,y+58,12,22,K); R(x+36,y+55,8,4,K);
+  // windows
+  R(x+13,y+22,6,6,K); R(x+61,y+22,6,6,K); R(x+37,y+14,6,6,K);
+  R(x+18,y+46,6,8,K); R(x+56,y+46,6,8,K);
+}
+
+/* ------------------------------------------------------------------ sound */
+let AC=null;
+function beep(type,f0,f1,dur,vol){
+  try{
+    if(!AC) AC=new (window.AudioContext||window.webkitAudioContext)();
+    const t=AC.currentTime, o=AC.createOscillator(), g=AC.createGain();
+    o.type=type; o.frequency.setValueAtTime(f0,t);
+    if(f1!==f0) o.frequency.linearRampToValueAtTime(f1,t+dur);
+    g.gain.setValueAtTime(vol,t);
+    g.gain.exponentialRampToValueAtTime(0.001,t+dur);
+    o.connect(g); g.connect(AC.destination); o.start(t); o.stop(t+dur);
+  }catch(e){}
+}
+const SFX = {
+  jump:  ()=>beep("square",320,620,.14,.06),
+  bigjump:()=>beep("square",280,700,.2,.06),
+  coin:  ()=>{beep("square",988,988,.05,.07); setTimeout(()=>beep("square",1319,1319,.2,.07),55);},
+  stomp: ()=>beep("square",240,90,.1,.07),
+  bump:  ()=>beep("square",120,60,.06,.06),
+  brk:   ()=>beep("sawtooth",300,60,.12,.05),
+  power: ()=>{[523,659,784,1047].forEach((f,i)=>setTimeout(()=>beep("square",f,f,.09,.06),i*55));},
+  grow:  ()=>{[392,523,659,784].forEach((f,i)=>setTimeout(()=>beep("triangle",f,f,.07,.06),i*45));},
+  shrink:()=>{[659,494,392].forEach((f,i)=>setTimeout(()=>beep("square",f,f,.09,.06),i*70));},
+  die:   ()=>{beep("square",392,392,.15,.07);
+              setTimeout(()=>beep("square",330,110,.7,.07),200);},
+  fire:  ()=>beep("sawtooth",700,180,.1,.05),
+  kick:  ()=>beep("square",180,400,.08,.06),
+  throwb:()=>beep("triangle",420,900,.12,.05),
+  catchb:()=>beep("triangle",900,520,.08,.05),
+  peel:  ()=>{beep("square",700,1100,.06,.05);
+              setTimeout(()=>beep("square",1100,300,.1,.05),60);},
+  lob:   ()=>beep("triangle",300,520,.1,.05),
+  flap:  ()=>beep("triangle",180,420,.07,.035),
+  wings: ()=>{[523,659,784,1047,1319].forEach((f,i)=>
+                setTimeout(()=>beep("triangle",f,f,.09,.06),i*50));},
+  unwing:()=>{[784,587,415].forEach((f,i)=>
+                setTimeout(()=>beep("triangle",f,f,.1,.05),i*80));},
+  fuse:  ()=>beep("square",1500,1500,.03,.03),
+  charge:()=>{[262,330,392,523].forEach((f,i)=>
+                setTimeout(()=>beep("triangle",f,f*1.5,.12,.05),i*55));},
+  beam:  ()=>{beep("sawtooth",1400,180,.5,.07);
+              beep("square",180,90,.55,.05);
+              setTimeout(()=>beep("sawtooth",900,120,.35,.05),120);},
+  drop:  ()=>beep("sine",900,200,.55,.035),
+  deflect:()=>{beep("square",1200,700,.06,.06);
+              setTimeout(()=>beep("square",700,1500,.08,.05),50);},
+  crash: ()=>{beep("sawtooth",700,60,.7,.055);
+              setTimeout(()=>beep("square",300,40,.5,.04),140);},
+  engine:()=>beep("sawtooth",110,150,.4,.03),
+  boom:  ()=>{beep("sawtooth",180,30,.45,.09);
+              beep("square",90,20,.5,.07);
+              setTimeout(()=>beep("sawtooth",260,40,.3,.05),40);},
+  pipe:  ()=>beep("square",500,80,.3,.06),
+  oneup: ()=>{[784,1047,1319,1568].forEach((f,i)=>setTimeout(()=>beep("triangle",f,f,.1,.06),i*70));},
+  flag:  ()=>{for(let i=0;i<14;i++) setTimeout(()=>beep("square",400+i*70,400+i*70,.05,.04),i*40);},
+  clear: ()=>{[523,523,523,415,523,622,830].forEach((f,i)=>
+                setTimeout(()=>beep("square",f,f,.18,.06),i*150));}
+};
+
+/* ------------------------------------------------------------------ input */
+const keys={}, pressed={};
+const MAP = {
+  ArrowLeft:"left", KeyA:"left", ArrowRight:"right", KeyD:"right",
+  ArrowDown:"down", KeyS:"down", ArrowUp:"jump", KeyW:"jump",
+  Space:"jump", KeyK:"jump", ShiftLeft:"run", ShiftRight:"run",
+  KeyZ:"run", KeyJ:"run", KeyX:"banana", KeyC:"dyn", KeyF:"fly",
+  KeyU:"umbrella", KeyE:"umbrella", KeyB:"blast", KeyR:"restart"
+};
+addEventListener("keydown",e=>{
+  const k=MAP[e.code]; if(!k) return;
+  e.preventDefault();
+  if(!keys[k]) pressed[k]=true;
+  keys[k]=true;
+  if(k==="restart") startLevel(true);
+});
+addEventListener("keyup",e=>{ const k=MAP[e.code]; if(k){ e.preventDefault(); keys[k]=false; } });
+
+/* ------------------------------------------------------------- game state */
+const GRAVITY=0.55, GRAV_HOLD=0.26, MAXFALL=8;
+const WALK_MAX=1.6, RUN_MAX=2.7, ACC=0.09, ACC_RUN=0.13, FRICTION=0.14;
+
+let overworld, bonus, world, cam, mario, ents, bumps, shards, floats;
+let frame=0, score=0, coins=0, lives=3, timeLeft=400, timeAcc=0;
+let state="play";        // play | dying | pipe | flag | clear | gameover
+let stateT=0, camMax=0, flagY=0, pipeAnim=null, returnFromPipe=false;
+let shake=0;             // camera kick, set by explosions
+
+function newMario(x,y,power){
+  return {x,y,vx:0,vy:0,w:12,h:power>0?30:15,power,face:1,
+          onGround:false,anim:"stand",star:0,inv:0,crouch:false,
+          fire:0,growT:0,growTo:0,ban:0,dyn:0,umbT:0,
+          spec:SPEC_MAX,cast:0,
+          wings:false,fly:0,flying:false,flapT:0};
+}
+
+function startLevel(hard){
+  overworld = makeOverworld();
+  bonus     = makeBonus();
+  world     = overworld;
+  cam = 0; camMax = 0;
+  const keepPower = hard ? 0 : 0;
+  mario = newMario(2.5*T, 12*T-15, keepPower);
+  ents=[]; bumps=[]; shards=[]; floats=[]; shake=0;
+  timeLeft=400; timeAcc=0; state="play"; stateT=0;
+  motion.step=0;
+  flagY = 4*T; pipeAnim=null;
+  if(hard){ score=0; coins=0; lives=3; }
+}
+
+function loseLife(){
+  lives--;
+  if(lives<=0){ state="gameover"; stateT=0; }
+  else { startLevel(false); }
+}
+
+/* --------------------------------------------------------- tile collision */
+function solidAt(x,y,forHead){
+  const t=get(world,x,y);
+  if(t===INVIS) return !!forHead;
+  return SOLID.has(t);
+}
+
+/* resolve a body (x,y,w,h,vx,vy) against the tilemap.
+   onHeadBump(tx,ty) is called for blocks struck from below. */
+function moveBody(b,onHeadBump){
+  // ---- horizontal
+  b.x += b.vx;
+  const y0=Math.floor(b.y/T), y1=Math.floor((b.y+b.h-1)/T);
+  if(b.vx>0){
+    const tx=Math.floor((b.x+b.w-1)/T);
+    for(let ty=y0;ty<=y1;ty++) if(solidAt(tx,ty,false)){
+      b.x = tx*T-b.w; b.vx=0; b.hitWall=1; break;
+    }
+  } else if(b.vx<0){
+    const tx=Math.floor(b.x/T);
+    for(let ty=y0;ty<=y1;ty++) if(solidAt(tx,ty,false)){
+      b.x = (tx+1)*T; b.vx=0; b.hitWall=-1; break;
+    }
+  }
+  if(b.x<0){ b.x=0; b.vx=0; b.hitWall=-1; }
+  const maxX=world.w*T-b.w;
+  if(b.x>maxX){ b.x=maxX; b.vx=0; b.hitWall=1; }
+
+  // ---- vertical
+  b.y += b.vy;
+  const x0=Math.floor(b.x/T), x1=Math.floor((b.x+b.w-1)/T);
+  b.onGround=false;
+  if(b.vy>0){
+    const ty=Math.floor((b.y+b.h-1)/T);
+    for(let tx=x0;tx<=x1;tx++) if(solidAt(tx,ty,false)){
+      b.y = ty*T-b.h; b.vy=0; b.onGround=true; break;
+    }
+  } else if(b.vy<0){
+    const ty=Math.floor(b.y/T);
+    let hit=null;
+    for(let tx=x0;tx<=x1;tx++) if(solidAt(tx,ty,true)){
+      // pick the tile the body overlaps most
+      const ov = Math.min(b.x+b.w,(tx+1)*T)-Math.max(b.x,tx*T);
+      if(!hit||ov>hit.ov) hit={tx,ty,ov};
+    }
+    if(hit){ b.y=(hit.ty+1)*T; b.vy=0; if(onHeadBump) onHeadBump(hit.tx,hit.ty); }
+  }
+  // A body resting on a tile sits with its bottom edge exactly on the tile
+  // boundary, which reads as "in the air" one frame later. Probe just below
+  // so standing is stable and jump presses are never dropped.
+  if(!b.onGround && b.vy>=0){
+    const ty=Math.floor((b.y+b.h)/T);
+    for(let tx=x0;tx<=x1;tx++) if(solidAt(tx,ty,false)){
+      b.y = ty*T-b.h; b.vy=0; b.onGround=true; break;
+    }
+  }
+}
+
+/* ------------------------------------------------------------ block logic */
+function bumpBlock(tx,ty){
+  const t=get(world,tx,ty);
+  if(!BUMPABLE.has(t)) { SFX.bump(); return; }
+  const k=key(tx,ty);
+  const info = world.contents.get(k);
+
+  if(t===BRICK||t===BRICK_UG){
+    if(info && info.item==="coins"){
+      spawnCoin(tx,ty); info.count--;
+      score+=200;
+      if(info.count<=0){ set(world,tx,ty,USED); world.contents.delete(k); }
+      bumps.push({tx,ty,off:0,vy:-2.4});
+      hitEnemiesAbove(tx,ty);
+      return;
+    }
+    if(info){                            // brick hiding a power-up
+      set(world,tx,ty,USED);
+      spawnItem(tx,ty,info.item);
+      world.contents.delete(k);
+      bumps.push({tx,ty,off:0,vy:-2.4});
+      hitEnemiesAbove(tx,ty);
+      return;
+    }
+    if(mario.power>0){                   // super Mario smashes it
+      set(world,tx,ty,EMPTY);
+      for(let i=0;i<4;i++)
+        shards.push({x:tx*T+(i&1?8:2),y:ty*T+(i<2?2:8),
+                     vx:(i&1?1.6:-1.6),vy:(i<2?-4.2:-2.6),r:0});
+      score+=50; SFX.brk();
+      hitEnemiesAbove(tx,ty);
+    } else {
+      bumps.push({tx,ty,off:0,vy:-2.4}); SFX.bump();
+      hitEnemiesAbove(tx,ty);
+    }
+    return;
+  }
+
+  // question block or hidden block
+  set(world,tx,ty,USED);
+  bumps.push({tx,ty,off:0,vy:-2.4});
+  hitEnemiesAbove(tx,ty);
+  const item = info ? info.item : "coin";
+  world.contents.delete(k);
+  if(item==="coin") spawnCoin(tx,ty);
+  else spawnItem(tx,ty,item);
+}
+
+function hitEnemiesAbove(tx,ty){
+  for(const e of ents){
+    if(e.dead||e.kind!=="enemy") continue;
+    if(e.y+e.h > ty*T-2 && e.y+e.h < ty*T+8 &&
+       e.x+e.w > tx*T && e.x < tx*T+T){
+      flipEnemy(e);
+    }
+  }
+}
+
+function spawnCoin(tx,ty){
+  ents.push({kind:"bcoin",x:tx*T+2,y:ty*T-14,w:12,h:14,vy:-5.4,t:0});
+  coins++; score+=200; SFX.coin();
+  if(coins>=100){ coins-=100; lives++; SFX.oneup(); }
+}
+
+function spawnItem(tx,ty,item){
+  if(item==="power") item = mario.power>0 ? "flower" : "mushroom";
+  const base={x:tx*T+2,y:ty*T,w:12,h:15,vx:0,vy:0,rise:T,onGround:false};
+  if(item==="mushroom"||item==="1up"){
+    ents.push({...base,kind:"item",type:item,vx:0.9}); SFX.power();
+  } else if(item==="flower"){
+    ents.push({...base,kind:"item",type:"flower"}); SFX.power();
+  } else if(item==="star"){
+    ents.push({...base,kind:"item",type:"star",vx:1.2,vy:0}); SFX.power();
+  } else if(item==="wing"){
+    ents.push({...base,kind:"item",type:"wing"}); SFX.power();
+  }
+}
+
+/* ---------------------------------------------------------------- enemies */
+function spawnEnemies(){
+  for(const s of world.enemies){
+    if(s.spawned) continue;
+    if(s.tx*T < cam+VW+32 && s.tx*T > cam-64){
+      s.spawned=true;
+      if(s.type==="goomba")
+        ents.push({kind:"enemy",type:"goomba",x:s.tx*T,y:s.ty*T,w:16,h:16,
+                   vx:-0.5,vy:0,state:"walk",t:0,onGround:false});
+      else if(s.type==="plane"){
+        ents.push({kind:"enemy",type:"plane",x:s.tx*T,y:s.ty*T,w:30,h:13,
+                   vx:-PLANE_SPD,vy:0,dir:-1,alt:s.ty*T,ph:s.tx*7,
+                   cool:70,state:"fly",t:0,onGround:false});
+        SFX.engine();
+      }
+      else
+        ents.push({kind:"enemy",type:"koopa",x:s.tx*T,y:s.ty*T-8,w:15,h:24,
+                   vx:-0.5,vy:0,state:"walk",t:0,onGround:false});
+    }
+  }
+}
+
+function flipEnemy(e){
+  e.state="flipped"; e.vy=-4.4; e.vx=e.vx>0?1:-1; e.dying=true;
+  score+=100; addFloat(e.x,e.y,"100"); SFX.kick();
+}
+function killEnemy(e,pts){
+  e.state="flipped"; e.vy=-4; e.dying=true; e.vx=0.8*(mario.face||1);
+  if(e.type==="plane") e.crashF=frame;
+  score+=pts; addFloat(e.x,e.y,String(pts)); SFX.kick();
+}
+/* a plane stomped from above: engine out, spinning into the ground */
+function shootDown(e,pts){
+  e.dying=true; e.state="crash"; e.crashF=frame;
+  e.vx = e.vx*0.4 + (mario.face||1)*0.7; e.vy=-2.6;
+  score+=pts; addFloat(e.x,e.y,String(pts)); SFX.crash();
+}
+function addFloat(x,y,txt){ floats.push({x,y,txt,t:0}); }
+
+function updateEnemy(e){
+  e.t++;
+  if(e.grace>0) e.grace--;
+  if(e.dying){                              // tumbling off screen
+    e.vy+=GRAVITY; e.x+=e.vx; e.y+=e.vy;
+    if(e.y>VH+64) e.dead=true;
+    return;
+  }
+  if(e.state==="squashed"){
+    if(++e.squashT>24) e.dead=true;
+    return;
+  }
+  // planes fly: no gravity, no tiles, their own patrol
+  if(e.type==="plane"){ updatePlane(e); return; }
+  e.vy = Math.min(e.vy+GRAVITY, MAXFALL);
+  e.hitWall=0;
+  const speed = Math.abs(e.vx) || 0.5;   // moveBody zeroes vx on contact
+  moveBody(e,null);
+  if(e.hitWall) e.vx = speed*(e.hitWall>0?-1:1);
+  if(e.y>VH+64){ e.dead=true; return; }
+
+  // enemy-vs-enemy
+  for(const o of ents){
+    if(o===e||o.dead||o.kind!=="enemy"||o.dying||o.state==="squashed") continue;
+    if(o.type==="plane") continue;            // it is up in the air, not in the way
+    if(!overlap(e,o)) continue;
+    if(e.state==="sliding"&&o.state!=="sliding"){ killEnemy(o,200); }
+    else if(o.state==="sliding"&&e.state!=="sliding"){ killEnemy(e,200); }
+    else if(e.state!=="sliding"&&o.state!=="sliding"){
+      const s=Math.abs(e.vx)||0.5;
+      if(e.x<o.x){ e.vx=-s; o.vx=Math.abs(o.vx)||s; }
+      else { e.vx=s; o.vx=-(Math.abs(o.vx)||s); }
+    }
+  }
+}
+
+function overlap(a,b){
+  return a.x < b.x+b.w && a.x+a.w > b.x && a.y < b.y+b.h && a.y+a.h > b.y;
+}
+
+/* ----------------------------------------------------------------- items */
+function updateItem(e){
+  if(e.rise>0){                            // emerging from the block
+    const d=Math.min(0.5,e.rise); e.y-=d; e.rise-=d; return;
+  }
+  if(e.type==="flower"||e.type==="wing") return;   // these sit still
+  e.vy=Math.min(e.vy+GRAVITY,MAXFALL);
+  e.hitWall=0;
+  const speed = Math.abs(e.vx) || 0.9;
+  moveBody(e,null);
+  if(e.hitWall) e.vx=speed*(e.hitWall>0?-1:1);
+  if(e.type==="star"&&e.onGround) e.vy=-4.2;   // stars bounce
+  if(e.y>VH+64) e.dead=true;
+}
+
+function collectItem(e){
+  e.dead=true;
+  if(e.type==="mushroom"){
+    if(mario.power===0){ growMario(1); } else { score+=1000; addFloat(e.x,e.y,"1000"); }
+    score+=1000;
+  } else if(e.type==="flower"){
+    if(mario.power===0) growMario(2); else { mario.power=2; SFX.grow(); }
+    score+=1000; addFloat(e.x,e.y,"1000");
+  } else if(e.type==="1up"){
+    lives++; addFloat(e.x,e.y,"1UP"); SFX.oneup();
+  } else if(e.type==="star"){
+    mario.star=600; score+=1000; addFloat(e.x,e.y,"1000"); SFX.power();
+  } else if(e.type==="wing"){
+    giveWings(); score+=1000; addFloat(e.x,e.y,"1000");
+  }
+}
+
+function growMario(to){
+  mario.growT=30; mario.growTo=to;
+  mario.power=to; mario.y-=15; mario.h=30;
+  SFX.grow();
+}
+function shrinkMario(){
+  if(mario.wings){ loseWings(); return; }   // the wings take this one
+  if(mario.power>0){
+    mario.power=0; mario.h=15; mario.y+=15; mario.inv=120; SFX.shrink();
+  } else {
+    startDeath();
+  }
+}
+function startDeath(){
+  state="dying"; stateT=0; mario.vy=-8.4; mario.vx=0; SFX.die();
+}
+
+/* ----------------------------------------------------------------- flight */
+const FLY_UNLIMITED = true;   // held F flies indefinitely; false = metered
+const FLY_RANGE = VW*4;   // metered mode only: pixels of travel per take-off
+const FLY_LIFT  = 1.15;   // upward pull per frame while the wings beat.
+                          // Must clearly beat GRAVITY (0.55) or pressing F
+                          // mid-fall takes half a second just to stop sinking.
+const FLY_RISE   = -3.2;  // fastest climb
+const FLY_GLIDE  = 2.5;   // winged Mario always drifts down gently
+const FLY_HOVER  = 1.6;   // meter drain when flying on the spot
+
+function giveWings(){
+  mario.wings=true; mario.fly=FLY_RANGE; mario.flying=false; mario.flapT=0;
+  SFX.wings();
+}
+function loseWings(){
+  mario.wings=false; mario.flying=false; mario.fly=0; mario.inv=90;
+  SFX.unwing();
+}
+
+function updateFlight(m){
+  if(!m.wings){ m.flying=false; return; }
+  if(m.flapT>0) m.flapT--;
+
+  // flight is simply "F is down" — it lifts him off the ground as readily as
+  // it keeps him up, and it lasts exactly as long as the key is held
+  const fuel = FLY_UNLIMITED || m.fly>0;
+  m.flying = !!keys.fly && fuel;
+
+  if(m.onGround && !m.flying) m.fly=FLY_RANGE;   // landing winds them back up
+
+  if(m.flying){
+    m.vy = Math.max(m.vy - FLY_LIFT, FLY_RISE);
+    if(!FLY_UNLIMITED){
+      // metered mode spends the budget in pixels of ground covered, so
+      // hovering on the spot still costs something
+      m.fly = Math.max(0, m.fly - Math.max(Math.abs(m.vx), FLY_HOVER));
+    }
+    if(m.flapT<=0){ m.flapT=10; SFX.flap(); }
+  }
+  // wings out means a soft landing whether or not there is flight left
+  if(m.vy>FLY_GLIDE) m.vy=FLY_GLIDE;
+  if(m.y<0){ m.y=0; if(m.vy<0) m.vy=0; }   // don't leave the top of the level
+}
+
+/* -------------------------------------------------------------- fireballs */
+function shootFire(){
+  const n = ents.filter(e=>e.kind==="fire"&&!e.dead).length;
+  if(n>=2) return;
+  ents.push({kind:"fire",x:mario.x+(mario.face>0?12:-4),
+             y:mario.y+(mario.power>0?12:6),w:8,h:8,
+             vx:4*mario.face,vy:1.5,onGround:false});
+  mario.fire=10; SFX.fire();
+}
+function updateFire(e){
+  e.vy=Math.min(e.vy+0.4,4);
+  const oldVx=e.vx; e.hitWall=0;
+  moveBody(e,null);
+  if(e.onGround) e.vy=-2.6;
+  if(e.hitWall){ e.dead=true; return; }
+  e.vx=oldVx;
+  if(e.x<cam-16||e.x>cam+VW+16||e.y>VH+32) e.dead=true;
+  for(const o of ents){
+    if(o.kind!=="enemy"||o.dead||o.dying||o.state==="squashed") continue;
+    if(overlap(e,o)){ killEnemy(o,200); e.dead=true; return; }
+  }
+}
+
+/* ---------------------------------------------------------------- bananas */
+const BAN_MAX = 2;            // bananas allowed in the air at once
+const BAN_PTS = [200,400,800,1000,2000,4000,8000];
+
+function bananasOut(){
+  return ents.filter(e=>e.kind==="banana"&&!e.dead).length;
+}
+function throwBanana(){
+  if(bananasOut()>=BAN_MAX) return;
+  ents.push({kind:"banana",
+             x:mario.x+(mario.face>0?10:-6),
+             y:mario.y+(mario.power>0?10:4),
+             w:10,h:10,
+             vx:4.8*mario.face, vy:-0.7,
+             dir:mario.face, spin:0, t:0, hits:0, back:false});
+  mario.ban=14; SFX.throwb();
+}
+
+function updateBanana(e){
+  e.t++;
+  e.spin += 0.55*e.dir;
+
+  if(!e.back){
+    // outward leg: bleed off speed, drift on a gentle arc
+    e.vx -= 0.13*e.dir;
+    e.vy  = Math.sin(e.t*0.13)*0.85;
+    if(e.vx*e.dir <= -0.5) e.back=true;         // past the turn, coming home
+  } else {
+    // return leg: steer towards Mario, capped at a catchable speed
+    const tx=mario.x+mario.w/2, ty=mario.y+mario.h/2;
+    const cx=e.x+e.w/2,        cy=e.y+e.h/2;
+    const d=Math.hypot(tx-cx,ty-cy)||1;
+    e.vx += (tx-cx)/d*0.42;
+    e.vy += (ty-cy)/d*0.42;
+    const sp=Math.min(5.6, 2.4+e.t*0.03), m=Math.hypot(e.vx,e.vy)||1;
+    if(m>sp){ e.vx=e.vx/m*sp; e.vy=e.vy/m*sp; }
+  }
+
+  // bananas sail over the terrain — no tile collision, so none get stuck
+  e.x+=e.vx; e.y+=e.vy;
+
+  // enemies: the banana keeps flying, so one throw can clear a whole row
+  for(const o of ents){
+    if(o.kind!=="enemy"||o.dead||o.dying||o.state==="squashed") continue;
+    if(!overlap(e,o)) continue;
+    const pts=BAN_PTS[Math.min(e.hits,BAN_PTS.length-1)];
+    e.hits++;
+    killEnemy(o,pts);
+    SFX.peel();
+  }
+
+  // caught on the way back
+  if(e.back && e.t>14 && state==="play" && overlap(e,mario)){
+    e.dead=true; SFX.catchb(); return;
+  }
+  if(e.t>300 || e.y>VH+48 || e.x<cam-80 || e.x>cam+VW+80) e.dead=true;
+}
+
+/* -------------------------------------------------------------- dynamite */
+const DYN_MAX   = 1;      // one stick in the air at a time — it hits hard
+const DYN_FUSE  = 96;     // frames before it blows if it never lands
+const DYN_LAND  = 24;     // shortened fuse once it touches down
+const DYN_R     = 34;     // blast radius that kills enemies / breaks bricks
+const DYN_SELF  = 0.6;    // fraction of that radius that can hurt Mario
+const DYN_PTS   = [200,400,800,1000,2000,4000,8000];
+
+function dynOut(){ return ents.filter(e=>e.kind==="dyn"&&!e.dead).length; }
+
+function throwDynamite(){
+  if(dynOut()>=DYN_MAX) return;
+  ents.push({kind:"dyn",
+             x:mario.x+(mario.face>0?8:-4),
+             y:mario.y+(mario.power>0?6:0),
+             w:8,h:12,
+             vx:1.9*mario.face + mario.vx*0.4,   // a lob, not a throw
+             vy:-7.4,
+             spin:0, fuse:DYN_FUSE, landed:false, onGround:false});
+  mario.dyn=22; SFX.lob();
+}
+
+function updateDynamite(e){
+  e.spin += 0.22*(e.vx>=0?1:-1);
+  e.vy = Math.min(e.vy+GRAVITY, MAXFALL);
+  e.hitWall=0;
+  const fallSpeed=e.vy, sideSpeed=e.vx;       // moveBody zeroes these on contact
+  moveBody(e,null);
+  if(e.hitWall) e.vx = -sideSpeed*0.4;        // glance off walls
+  if(e.onGround){
+    if(!e.landed){                            // came back down — light it up
+      e.landed=true;
+      e.fuse=Math.min(e.fuse,DYN_LAND);
+      SFX.fuse();
+    }
+    if(fallSpeed>1.5) e.vy = -fallSpeed*0.42; // one small bounce
+    e.vx *= 0.86;
+  }
+
+  // a direct hit on an enemy sets it off early
+  if(state==="play") for(const o of ents){
+    if(o.kind!=="enemy"||o.dead||o.dying||o.state==="squashed") continue;
+    if(overlap(e,o)){ e.fuse=0; break; }
+  }
+
+  if(--e.fuse<=0 || e.y>VH+64){
+    if(e.y<=VH+64) explode(e.x+e.w/2, e.y+e.h/2);
+    e.dead=true;
+  }
+}
+
+/* radius and selfHurt (the fraction of it that can hurt Mario) default to
+   the dynamite numbers; the planes' bombs pass their own */
+function explode(cx,cy,radius,selfHurt){
+  ents.push({kind:"boom",x:cx-2,y:cy-2,w:4,h:4,r:2,t:0,hit:false,
+             rMax: radius===undefined?DYN_R:radius,
+             self: selfHurt===undefined?DYN_SELF:selfHurt});
+  shake=7; SFX.boom();
+}
+
+function updateBoom(e){
+  e.t++;
+  e.r = 2 + (e.rMax-2)*Math.min(1,e.t/9);      // punches out fast, then fades
+  if(e.t===1) blast(e.x+e.w/2, e.y+e.h/2, e.rMax, e.self);
+  if(e.t>20) e.dead=true;
+}
+
+/* one-shot damage pass at the moment of detonation */
+function blast(cx,cy,radius,selfHurt){
+  const rad = radius===undefined?DYN_R:radius;
+  const self = selfHurt===undefined?DYN_SELF:selfHurt;
+  let hits=0;
+  for(const o of ents){
+    if(o.kind!=="enemy"||o.dead||o.dying||o.state==="squashed") continue;
+    const dx=(o.x+o.w/2)-cx, dy=(o.y+o.h/2)-cy;
+    if(dx*dx+dy*dy > rad*rad) continue;
+    killEnemy(o, DYN_PTS[Math.min(hits,DYN_PTS.length-1)]);
+    hits++;
+  }
+  // terrain: bricks shatter, ? blocks pop open
+  const t0=Math.floor((cx-rad)/T), t1=Math.floor((cx+rad)/T);
+  const r0=Math.floor((cy-rad)/T), r1=Math.floor((cy+rad)/T);
+  for(let ty=r0;ty<=r1;ty++) for(let tx=t0;tx<=t1;tx++){
+    const dx=tx*T+T/2-cx, dy=ty*T+T/2-cy;
+    if(dx*dx+dy*dy > rad*rad) continue;
+    const t=get(world,tx,ty);
+    if(t===BRICK||t===BRICK_UG){
+      if(world.contents.get(key(tx,ty))){ bumpBlock(tx,ty); continue; }
+      set(world,tx,ty,EMPTY);               // plain brick: blown to bits
+      for(let i=0;i<4;i++)
+        shards.push({x:tx*T+(i&1?8:2),y:ty*T+(i<2?2:8),
+                     vx:(i&1?1.8:-1.8),vy:(i<2?-4.4:-2.8),r:0});
+      score+=50;
+    } else if(t===QBLOCK||t===INVIS){
+      bumpBlock(tx,ty);
+    }
+  }
+  // Mario is not immune — the inner part of the blast still stings
+  if(state==="play" && mario.star===0 && mario.inv===0){
+    const dx=(mario.x+mario.w/2)-cx, dy=(mario.y+mario.h/2)-cy;
+    const rr=rad*self;
+    if(rr>0 && dx*dx+dy*dy <= rr*rr) shrinkMario();
+  }
+}
+
+/* --------------------------------------------------------- the special */
+/* Sub-Zero's freeze in Mortal Kombat is Down, Forward, Punch, and Mario's
+   beam is entered the same way: tap down, then the way he should fire, then
+   B.  Each step has to land within SPEC_WIN frames of the one before it, so
+   it reads as one motion rather than three separate presses. */
+const SPEC_WIN  = 22;
+const SPEC_MAX  = 100;    // a full meter buys exactly one beam
+const SPEC_GAIN = 0.34;   // ...and takes about five seconds to come back
+const CAST_WIND = 14;     // frames of gathering light before it goes off
+const CAST_HOLD = 20;     // frames he holds the pose afterwards
+const BEAM_SPD  = 30;     // how fast it reaches out, px per frame
+const BEAM_LIFE = 26;
+const BEAM_H    = 12;     // the height of the band it clears
+const BEAM_PTS  = [200,400,800,1000,2000,4000,8000];
+
+const motion = {step:0, t:0, dir:1};
+function feedMotion(){
+  if(motion.step && ++motion.t>SPEC_WIN) motion.step=0;    // too slow, forget it
+  if(pressed.down){ motion.step=1; motion.t=0; }
+  else if(motion.step===1 && (pressed.left||pressed.right)){
+    motion.step=2; motion.t=0; motion.dir = pressed.right?1:-1;
+  }
+}
+function motionArmed(){ return motion.step===2; }
+
+function startCast(m,dir){
+  m.cast=CAST_WIND+CAST_HOLD; m.face=dir; m.spec=0; m.vx=0;
+  motion.step=0; SFX.charge();
+}
+
+function fireBeam(m){
+  ents.push({kind:"beam", dir:m.face, y:m.y+(m.power>0?15:6),
+             x0:m.x+(m.face>0?14:-2), len:0, t:0, hits:0});
+  shake=5; SFX.beam();
+}
+
+function updateBeam(e){
+  e.t++;
+  e.len = Math.min(VW+96, e.len+BEAM_SPD);
+  // everything standing in the band goes, and the score climbs as it goes
+  const band={x: e.dir>0 ? e.x0 : e.x0-e.len, y: e.y-BEAM_H/2, w: e.len, h: BEAM_H};
+  for(const o of ents){
+    if(o.kind!=="enemy"||o.dead||o.dying||o.state==="squashed") continue;
+    if(!overlap(band,o)) continue;
+    killEnemy(o, BEAM_PTS[Math.min(e.hits,BEAM_PTS.length-1)]);
+    e.hits++;
+  }
+  if(e.t>BEAM_LIFE) e.dead=true;
+}
+
+/* -------------------------------------------------------------- umbrella */
+const UMB_OPEN  = 6;      // frames to snap the canopy open (and to furl it)
+const UMB_W     = 14;     // half-width of the fully open canopy
+const UMB_GLIDE = 1.5;    // fall speed underneath it
+
+/* canopy geometry, shared by the drawing and the hit test */
+function umbGeom(m){
+  const k = Math.min(1, m.umbT/UMB_OPEN);
+  return {k,
+          top: m.y - (m.power>0?24:19) + (1-k)*12,
+          W:   Math.max(2,(UMB_W*k)|0),
+          hy:  m.y + (m.power>0?13:6)};
+}
+function umbrellaUp(){ return mario.umbT>0 && state==="play"; }
+function umbrellaBox(){
+  const g=umbGeom(mario);
+  return {x: mario.x+6-g.W, y: g.top, w: g.W*2, h: 12};
+}
+
+/* -------------------------------------------------------- bomber airplane */
+const PLANE_SPD   = 1.15;   // cruise speed, a shade faster than Mario walks
+const PLANE_RANGE = 150;    // how far past him it flies before banking round
+const PLANE_COOL  = 100;    // frames between bomb drops
+const PLANE_AIM   = 46;     // drops once he is this close, and ahead of it
+const PLANE_PTS   = 500;    // for stomping one
+
+function updatePlane(e){
+  // it hunts Mario: hold course until he is well behind, then turn back
+  const aim = (mario.x+mario.w/2) - (e.x+e.w/2);
+  if(aim*e.dir < -PLANE_RANGE) e.dir = -e.dir;
+  e.vx = PLANE_SPD*e.dir;
+  e.x += e.vx;
+  e.y  = e.alt + Math.sin((e.t+e.ph)*0.045)*7;      // a slow swell as it cruises
+  if(e.x < 8){ e.x=8; e.dir=1; }
+  const maxX = world.w*T-e.w-8;
+  if(e.x > maxX){ e.x=maxX; e.dir=-1; }
+
+  if(e.cool>0) e.cool--;
+  // the bomb keeps the plane's momentum, so it lets go a little short
+  if(e.cool<=0 && aim*e.dir>0 && Math.abs(aim)<PLANE_AIM){
+    dropBomb(e); e.cool=PLANE_COOL;
+  }
+}
+
+/* ------------------------------------------------------------------ bombs */
+const BOMB_GRAV = 0.28;   // slower than Mario's gravity on purpose: there is
+const BOMB_FALL = 4.6;    // time to run clear or to get the umbrella up
+const BOMB_R    = 26;     // blast radius, smaller than a stick of dynamite
+const BOMB_SELF = 0.55;   // the part of it that hurts Mario. Deliberately a
+                          // shade narrower than the open canopy, so a bomb the
+                          // umbrella could have caught is the only kind that
+                          // can reach him — one landing wider is survivable.
+
+function dropBomb(p){
+  ents.push({kind:"bomb",x:p.x+p.w/2-4,y:p.y+p.h-2,w:8,h:11,
+             vx:p.vx*0.85, vy:0.4, spin:0, t:0, deflected:false});
+  SFX.drop();
+}
+
+function updateBomb(e){
+  e.t++;
+  e.spin += e.deflected ? 0.44 : 0.05*(e.vx>=0?1:-1);
+  e.vy = Math.min(e.vy+BOMB_GRAV, BOMB_FALL);
+  e.hitWall=0;
+  moveBody(e,null);
+  if(e.y>VH+64){ e.dead=true; return; }        // dropped into a pit, no bang
+
+  // the umbrella: a bomb that lands on the canopy is swatted clear, and from
+  // then on it is Mario's — the blast spares him and takes enemies with it
+  if(!e.deflected && umbrellaUp() && overlap(e,umbrellaBox())){
+    deflectBomb(e); return;
+  }
+  if(e.onGround || e.hitWall){ blowBomb(e); return; }
+  if(state!=="play") return;
+  if(!e.deflected && overlap(e,mario)){ blowBomb(e); return; }   // direct hit
+  if(e.deflected) for(const o of ents){
+    if(o.kind!=="enemy"||o.dead||o.dying||o.state==="squashed") continue;
+    if(overlap(e,o)){ blowBomb(e); return; }
+  }
+}
+
+function blowBomb(e){
+  e.dead=true;
+  // a swatted bomb is harmless to Mario: self radius 0
+  explode(e.x+e.w/2, e.y+e.h/2, BOMB_R, e.deflected?0:BOMB_SELF);
+}
+
+function deflectBomb(e){
+  e.deflected=true;
+  e.y = umbrellaBox().y - e.h;               // pop it off the top of the canopy
+  const away = (e.x+e.w/2 < mario.x+mario.w/2) ? -1 : 1;
+  e.vx = 2.7*away + mario.vx*0.5;
+  e.vy = -3.8;
+  score+=100; addFloat(e.x,e.y,"100");
+  SFX.deflect();
+}
+
+/* ------------------------------------------------------------ warp pipes */
+function tryWarpDown(){
+  if(!mario.onGround||!keys.down) return false;
+  const ty=Math.floor((mario.y+mario.h)/T);
+  const cx=Math.floor((mario.x+mario.w/2)/T);
+  const dest = world.warpDown.get(key(cx,ty));
+  if(!dest) return false;
+  state="pipe"; stateT=0;
+  pipeAnim={dir:"down",dest,x:cx*T + (get(world,cx+1,ty)===PIPE_TR?T/2:-T/2)};
+  mario.x = pipeAnim.x + 2; mario.vx=0; mario.vy=0;
+  SFX.pipe(); return true;
+}
+function tryWarpRight(){
+  if(!mario.onGround||!keys.right) return false;
+  const ty=Math.floor((mario.y+mario.h-1)/T);
+  const tx=Math.floor((mario.x+mario.w)/T);
+  const dest = world.warpRight.get(key(tx,ty)) || world.warpRight.get(key(tx,ty-1));
+  if(!dest) return false;
+  state="pipe"; stateT=0;
+  pipeAnim={dir:"right",dest};
+  mario.vx=0; mario.vy=0; SFX.pipe(); return true;
+}
+
+function updatePipe(){
+  stateT++;
+  if(pipeAnim.dir==="down"){
+    mario.y += 1;
+    mario.anim="stand";
+    if(stateT>34) enterWorld(pipeAnim.dest);
+  } else {
+    mario.x += 1; mario.anim="walk";
+    if(stateT>34) enterWorld(pipeAnim.dest);
+  }
+}
+
+function enterWorld(which){
+  ents=[]; bumps=[]; shards=[]; floats=[]; shake=0;
+  if(which==="bonus"){
+    world=bonus;
+    // just below the brick ceiling, dropping in
+    mario.x=3*T; mario.y=2*T; mario.vy=0; mario.vx=0;
+    cam=0; camMax=0; state="play";
+  } else {
+    world=overworld;
+    // rise up out of the return pipe at x=163
+    mario.x=163*T+4; mario.y=13*T; mario.vx=0; mario.vy=0;
+    cam=Math.max(0,Math.min(world.w*T-VW,163*T-96)); camMax=cam;
+    pipeAnim={dir:"up"};
+    state="rise"; stateT=0;
+  }
+  // re-arm enemies that are ahead of us
+  for(const s of world.enemies) if(s.tx*T > cam+VW) s.spawned=false;
+}
+
+/* ---------------------------------------------------------- mario update */
+function updateMario(){
+  const m=mario;
+  if(m.growT>0){ m.growT--; return; }     // brief grow/shrink freeze
+  if(m.star>0) m.star--;
+  if(m.inv>0) m.inv--;
+  if(m.fire>0) m.fire--;
+
+  // the special: the motion buffer ticks every frame, the beam leaves his
+  // hands partway through the cast, and the meter refills the rest of the time
+  feedMotion();
+  if(m.cast>0 && --m.cast===CAST_HOLD) fireBeam(m);
+  const casting = m.cast>0;
+  if(!casting && m.spec<SPEC_MAX) m.spec=Math.min(SPEC_MAX,m.spec+SPEC_GAIN);
+
+  const big=m.power>0;
+  m.crouch = big && m.onGround && keys.down && !keys.left && !keys.right && !casting;
+
+  // umbrella: snaps open while the key is held, furls when it is let go.
+  // Both hands are on the handle, so no running and nothing to throw.
+  if(keys.umbrella && !m.crouch && !casting){ if(m.umbT<UMB_OPEN) m.umbT++; }
+  else if(m.umbT>0) m.umbT--;
+  const umb = m.umbT>0;
+
+  const run = keys.run && !umb;
+  const max = run ? RUN_MAX : WALK_MAX;
+  const acc = run ? ACC_RUN : ACC;
+
+  if(casting){                             // planted for the whole move
+    m.vx=0;
+  } else if(!m.crouch){
+    if(keys.left && !keys.right){
+      m.vx -= acc; if(m.vx < -max) m.vx = -max;
+      m.face=-1;
+    } else if(keys.right && !keys.left){
+      m.vx += acc; if(m.vx > max) m.vx = max;
+      m.face=1;
+    } else {
+      if(m.vx>0) m.vx=Math.max(0,m.vx-FRICTION);
+      else if(m.vx<0) m.vx=Math.min(0,m.vx+FRICTION);
+    }
+  } else {
+    if(m.vx>0) m.vx=Math.max(0,m.vx-FRICTION);
+    else if(m.vx<0) m.vx=Math.min(0,m.vx+FRICTION);
+  }
+
+  // jump
+  if(pressed.jump && m.onGround && !casting){
+    const boost = Math.min(Math.abs(m.vx)/RUN_MAX,1)*1.1;
+    m.vy = -(6.6+boost);
+    m.jumping=true;
+    big ? SFX.bigjump() : SFX.jump();
+  }
+  if(!keys.jump || m.vy>=0) m.jumping=false;
+  m.vy = Math.min(m.vy + (m.jumping ? GRAV_HOLD : GRAVITY), MAXFALL);
+
+  // wings: beat them for lift, glide the rest of the time
+  updateFlight(m);
+
+  // the open canopy is a parachute — he drifts down under it
+  if(umb && m.vy>UMB_GLIDE) m.vy=UMB_GLIDE;
+
+  // fireball
+  if(pressed.run && m.power===2 && !m.fire && !m.crouch && !umb && !casting) shootFire();
+
+  // banana boomerang — available to Mario at any size
+  if(m.ban>0) m.ban--;
+  if(pressed.banana && !m.ban && !umb && !casting) throwBanana();
+
+  // dynamite — lobbed up and over, blows when it lands
+  if(m.dyn>0) m.dyn--;
+  if(pressed.dyn && !m.dyn && !umb && !casting) throwDynamite();
+
+  // special: down, forward, B — with a full meter and both hands free
+  if(!casting && !umb && pressed.blast && motionArmed() && m.spec>=SPEC_MAX)
+    startCast(m,motion.dir);
+
+  // pipes
+  if(tryWarpDown()) return;
+  if(world.warpRight.size && tryWarpRight()) return;
+
+  m.hitWall=0;
+  const wasGround=m.onGround;
+  moveBody(m,(tx,ty)=>bumpBlock(tx,ty));
+  if(m.onGround) m.jumping=false;
+  // the pre-move clamp lets a fast climb overshoot by a pixel or two, so pin
+  // the top edge again once the move has actually happened
+  if(m.wings && m.y<0){ m.y=0; if(m.vy<0) m.vy=0; }
+
+  // coins lying in the coin room
+  const cx0=Math.floor(m.x/T), cx1=Math.floor((m.x+m.w-1)/T);
+  const cy0=Math.floor(m.y/T), cy1=Math.floor((m.y+m.h-1)/T);
+  for(let ty=cy0;ty<=cy1;ty++) for(let tx=cx0;tx<=cx1;tx++){
+    if(get(world,tx,ty)===COIN_T){
+      set(world,tx,ty,EMPTY);
+      coins++; score+=200; SFX.coin();
+      if(coins>=100){ coins-=100; lives++; SFX.oneup(); }
+    }
+  }
+
+  // fell in a pit
+  if(m.y > VH+16){ startDeath(); return; }
+
+  // animation state
+  // (flight reuses the jump pose — arm up, legs apart — and the beating
+  //  wings behind him carry the rest of the read)
+  if(casting) m.anim="cast";
+  else if(!m.onGround) m.anim="jump";
+  else if(m.crouch) m.anim="crouch";
+  else if(Math.abs(m.vx)>0.15){
+    const skid = (m.vx>0&&keys.left)||(m.vx<0&&keys.right);
+    m.anim = skid ? "skid" : "walk";
+  } else m.anim="stand";
+
+  // touch entities
+  for(const e of ents){
+    if(e.dead) continue;
+    if(e.kind==="item"){ if(overlap(m,e)) collectItem(e); continue; }
+    if(e.kind!=="enemy"||e.dying||e.state==="squashed") continue;
+    if(!overlap(m,e)) continue;
+
+    if(m.star>0){ killEnemy(e,200); continue; }
+
+    const stomping = m.vy>0 && (m.y+m.h) - e.y < 12;
+    if(stomping){
+      if(e.type==="plane"){
+        shootDown(e,PLANE_PTS);
+      } else if(e.type==="goomba"){
+        e.state="squashed"; e.squashT=0; e.vx=0;
+        score+=100; addFloat(e.x,e.y,"100"); SFX.stomp();
+      } else if(e.state==="walk"){
+        e.state="shell"; e.vx=0; e.h=16; e.y=e.y+8; e.grace=10;
+        score+=100; addFloat(e.x,e.y,"100"); SFX.stomp();
+      } else if(e.state==="shell" && !e.grace){
+        e.state="sliding"; e.grace=10;
+        e.vx = (m.x+m.w/2 < e.x+e.w/2) ? 3.2 : -3.2;
+        score+=400; SFX.kick();
+      } else if(e.state==="sliding" && !e.grace){
+        e.state="shell"; e.vx=0; e.grace=10; SFX.stomp();
+      }
+      m.vy = keys.jump ? -6.2 : -4.2;
+      m.jumping = keys.jump;
+    } else if(e.state==="shell"){
+      if(!e.grace){
+        e.state="sliding"; e.grace=10;
+        e.vx = (m.x+m.w/2 < e.x+e.w/2) ? 3.2 : -3.2;
+        score+=400; SFX.kick();
+      }
+    } else if(m.inv===0){
+      shrinkMario(); if(state==="dying") return;
+    }
+  }
+
+  // flagpole
+  if(world===overworld && m.x+m.w >= world.flagX*T+8){
+    state="flag"; stateT=0; m.vx=0; m.vy=0;
+    m.x = world.flagX*T + 3; m.anim="climb";
+    // higher grab on the pole = bigger bonus, as in the original
+    const rel = Math.max(0, Math.min(1, (12*T - (m.y+m.h)) / (8*T)));
+    const tiers = [100,200,400,800,2000,5000];
+    const pts = tiers[Math.min(5,Math.floor(rel*6))];
+    score += pts; addFloat(m.x, m.y, String(pts));
+    SFX.flag();
+  }
+}
+
+/* -------------------------------------------------------- ending sequence */
+function updateFlag(){
+  stateT++;
+  const bottom = 12*T - mario.h;
+  // the flag always runs all the way down, wherever Mario grabbed the pole
+  flagY = Math.min(11*T-16, flagY+2.2);
+  if(mario.y < bottom){
+    mario.y = Math.min(bottom, mario.y+2.2);
+  } else if(flagY >= 11*T-16){
+    if(!mario.hopped){                     // hop off the pole onto the ground
+      mario.hopped=true; mario.face=1; mario.x+=10;
+      mario.y = 13*T - mario.h;
+    }
+    mario.anim="walk"; mario.x += 1.2;
+    if(mario.x > (world.castleX*T+34)){
+      state="clear"; stateT=0; SFX.clear();
+    }
+  }
+}
+
+function updateClear(){
+  stateT++;
+  if(timeLeft>0 && stateT%2===0){
+    const d=Math.min(timeLeft,5); timeLeft-=d; score+=d*50;
+    if(stateT%8===0) beep("square",1200,1200,.03,.04);
+  }
+}
+
+/* ------------------------------------------------------------- main loop */
+function update(){
+  frame++;
+
+  // thrown things belong to normal play; don't leave one hanging in mid-air
+  // through the flagpole slide, a pipe ride or the level-clear tally
+  if(state!=="play" && state!=="dying")
+    ents = ents.filter(e=>e.kind!=="banana"&&e.kind!=="dyn"&&e.kind!=="boom"&&
+                          e.kind!=="bomb"&&e.kind!=="beam");
+
+  if(state==="play"){
+    updateMario();
+    spawnEnemies();
+    for(const e of ents){
+      if(e.dead) continue;
+      if(e.kind==="enemy") updateEnemy(e);
+      else if(e.kind==="item") updateItem(e);
+      else if(e.kind==="fire") updateFire(e);
+      else if(e.kind==="banana") updateBanana(e);
+      else if(e.kind==="dyn") updateDynamite(e);
+      else if(e.kind==="bomb") updateBomb(e);
+      else if(e.kind==="beam") updateBeam(e);
+      else if(e.kind==="boom") updateBoom(e);
+      else if(e.kind==="bcoin"){
+        e.t++; e.vy+=0.4; e.y+=e.vy;
+        if(e.t>28) e.dead=true;
+      }
+    }
+    ents = ents.filter(e=>!e.dead);
+
+    // timer
+    timeAcc++;
+    if(timeAcc>=24){ timeAcc=0; timeLeft--;
+      if(timeLeft<=0){ timeLeft=0; startDeath(); } }
+  } else if(state==="dying"){
+    for(const e of ents) if(e.kind==="banana"&&!e.dead) updateBanana(e);
+    for(const e of ents) if(e.kind==="dyn"&&!e.dead) updateDynamite(e);
+    for(const e of ents) if(e.kind==="bomb"&&!e.dead) updateBomb(e);
+    for(const e of ents) if(e.kind==="boom"&&!e.dead) updateBoom(e);
+    ents = ents.filter(e=>!e.dead);
+    stateT++;
+    if(stateT>24){ mario.vy=Math.min(mario.vy+0.5,10); mario.y+=mario.vy; }
+    if(stateT>140) loseLife();
+  } else if(state==="pipe"){
+    updatePipe();
+  } else if(state==="rise"){
+    stateT++;
+    mario.y -= 1;
+    mario.anim="stand";
+    if(mario.y <= 11*T-mario.h){ mario.y=11*T-mario.h; state="play"; }
+  } else if(state==="flag"){
+    updateFlag();
+  } else if(state==="clear"){
+    updateClear();
+  } else if(state==="gameover"){
+    stateT++;
+    if(stateT>200) startLevel(true);
+  }
+
+  // bumped-block animation
+  for(const b of bumps){ b.vy+=0.5; b.off+=b.vy; if(b.off>=0){ b.off=0; b.done=true; } }
+  bumps = bumps.filter(b=>!b.done);
+  for(const s of shards){ s.vy+=0.42; s.x+=s.vx; s.y+=s.vy; s.r+=0.4; }
+  shards = shards.filter(s=>s.y<VH+32);
+  for(const f of floats) f.t++;
+  floats = floats.filter(f=>f.t<40);
+
+  // camera (never scrolls backwards)
+  if(state!=="clear"){
+    const want = mario.x + mario.w/2 - 100;
+    camMax = Math.max(camMax, want);
+    cam = Math.max(0, Math.min(world.w*T-VW, camMax));
+  }
+  if(shake>0) shake=Math.max(0,shake-0.55);
+
+  pressed.jump=pressed.run=pressed.down=pressed.left=pressed.right=false;
+  pressed.banana=pressed.dyn=pressed.fly=false;
+  pressed.umbrella=pressed.blast=false;
+}
+
+/* ---------------------------------------------------------------- render */
+function render(){
+  const p = PAL[world.theme];
+  R(0,0,VW,VH,p.sky);
+
+  const camX = Math.floor(cam + (shake>0 ? Math.sin(frame*2.2)*shake : 0));
+
+  // scenery (overworld only)
+  if(world.theme==="over"){
+    for(const s of SCENERY){
+      const x = s.x - camX;
+      if(x < -80 || x > VW+80) continue;
+      if(s.t==="hill") drawHill(x,13*T,s.big);
+      else if(s.t==="cloud") drawCloud(x,s.y,s.n);
+      else drawBush(x,13*T,s.n);
+    }
+    drawCastle(world.castleX*T-camX, 13*T);
+    // the pennant, hanging to the left of the pole with a notched tail
+    const fx=world.flagX*T-camX;
+    for(let i=0;i<12;i++){
+      const cut=Math.max(0,5-i);
+      R(fx-12+i, flagY+cut, 1, 14-cut*2, "#f8f8f8");
+    }
+    R(fx-7,flagY+5,4,4,"#000");
+  }
+
+  // while travelling through a pipe Mario is drawn *behind* the tiles
+  const inPipe = (state==="pipe"||state==="rise");
+  if(inPipe) drawPlayer(camX);
+
+  // tiles
+  const tx0=Math.floor(camX/T), tx1=Math.min(world.w-1,tx0+VW/T+1);
+  for(let ty=0;ty<world.h;ty++){
+    for(let tx=tx0;tx<=tx1;tx++){
+      const t=get(world,tx,ty);
+      if(t===EMPTY||t===INVIS) continue;
+      let oy=0;
+      for(const b of bumps) if(b.tx===tx&&b.ty===ty) oy=b.off;
+      drawTile(t,tx*T-camX,ty*T+oy,p,frame);
+    }
+  }
+
+  // brick shards
+  for(const s of shards){
+    ctx.save(); ctx.translate(s.x-camX+3,s.y+3); ctx.rotate(s.r);
+    R(-3,-3,6,6,p.br1); R(-3,-3,6,2,p.br2);
+    ctx.restore();
+  }
+
+  // entities
+  for(const e of ents){
+    const x=e.x-camX, y=e.y;
+    if(x<-32||x>VW+32) continue;
+    if(e.kind==="enemy"){
+      if(e.type==="goomba") drawGoomba(e,x,y,frame);
+      else if(e.type==="plane") drawPlane(e,x,y,frame);
+      else drawKoopa(e,x,y,frame);
+    } else if(e.kind==="item"){
+      if(e.type==="mushroom") drawMushroom(x,y,false);
+      else if(e.type==="1up") drawMushroom(x,y,true);
+      else if(e.type==="flower") drawFlower(x,y,frame);
+      else if(e.type==="wing") drawWingItem(x,y,frame);
+      else drawStar(x,y,frame);
+    } else if(e.kind==="fire"){
+      drawFireball(x,y,frame);
+    } else if(e.kind==="banana"){
+      drawBanana(x,y,e.spin);
+    } else if(e.kind==="dyn"){
+      drawDynamite(x,y,e);
+    } else if(e.kind==="bomb"){
+      drawBomb(x,y,e);
+    } else if(e.kind==="bcoin"){
+      drawCoinSprite(x+2,y,frame);
+    }
+  }
+
+  if(!inPipe) drawPlayer(camX);
+
+  // the beam goes over the scenery, the enemies and Mario himself
+  for(const e of ents) if(!e.dead && e.kind==="beam") drawBeam(e,camX);
+
+  // the fireball reads best over everything else
+  for(const e of ents){
+    if(e.dead||e.kind!=="boom") continue;
+    drawBoom(e.x-camX,e.y,e);
+  }
+
+  // floating score popups
+  ctx.font="8px monospace"; ctx.fillStyle="#fff";
+  for(const f of floats)
+    ctx.fillText(f.txt, f.x-camX, f.y-f.t*0.6);
+
+  drawHUD();
+
+  if(state==="gameover"){
+    R(0,0,VW,VH,"#000");
+    text("GAME OVER",96,110,"#fff");
+  } else if(state==="clear"){
+    text("COURSE CLEAR!",76,72,"#fff");
+    text("SCORE "+String(score).padStart(6,"0"),80,86,"#fff");
+  }
+}
+
+function drawPlayer(camX){
+  if(state==="gameover") return;
+  if(mario.inv>0 && (frame&2)) return;          // flicker after taking a hit
+  if(state==="flag" && !mario.hopped) drawMarioClimb(mario.x-camX, mario.y, frame);
+  else {
+    if(mario.wings) drawMarioWings(mario, mario.x-2-camX, mario.y, frame);
+    drawMario(mario, mario.x-2-camX, mario.y, frame);
+    if(mario.umbT>0) drawUmbrella(mario, mario.x-2-camX, mario.y);
+    // the gathering ball of light, up until the beam leaves his hands
+    if(mario.cast>CAST_HOLD) drawCharge(mario, mario.x-2-camX, mario.y, frame);
+  }
+}
+
+function drawMarioClimb(x,y,frame){
+  const m=mario, p=marioPal(m,frame), big=m.power>0;
+  ctx.save(); ctx.translate(x-2,y);
+  if(big){
+    R(4,0,9,2,p.cap); R(2,2,13,3,p.cap);
+    R(5,5,8,6,p.skin); R(4,5,3,4,p.hair); R(11,6,2,3,"#000");
+    R(7,9,6,2,p.hair);
+    R(4,11,10,7,p.shirt); R(0,10,4,4,p.skin);
+    R(4,18,10,7,p.overall); R(3,25,5,5,p.overall); R(9,25,5,5,p.shoe);
+  } else {
+    R(2,0,11,2,p.cap); R(1,2,12,3,p.cap);
+    R(4,5,9,4,p.skin); R(9,6,2,2,"#000"); R(6,8,6,2,p.hair);
+    R(3,9,10,3,p.shirt); R(0,9,3,3,p.skin);
+    R(4,12,8,3,p.overall); R(3,15,4,1,p.shoe); R(9,15,4,1,p.shoe);
+  }
+  ctx.restore();
+}
+
+function text(s,x,y,col){
+  ctx.font="bold 10px monospace"; ctx.fillStyle=col;
+  ctx.fillText(s,x,y);
+}
+
+function drawHUD(){
+  ctx.font="bold 8px monospace"; ctx.fillStyle="#fff";
+  ctx.fillText("MARIO",24,16);
+  ctx.fillText(String(score).padStart(6,"0"),24,26);
+  // coin counter
+  drawCoinSprite(96,18,frame);
+  ctx.fillStyle="#fff";
+  ctx.fillText("x"+String(coins).padStart(2,"0"),108,26);
+  ctx.fillText("WORLD",152,16);
+  ctx.fillText("1-1",158,26);
+  ctx.fillText("TIME",204,16);
+  ctx.fillText(String(timeLeft).padStart(3,"0"),208,26);
+  ctx.fillText("x"+lives,66,16);
+  // KI meter under the score: a full bar is one beam, and it flashes when ready
+  const kw=56, kf=Math.round(kw*mario.spec/SPEC_MAX);
+  R(23,31,kw+2,6,"#000");
+  if(kf>0) R(24,32,kf,4, mario.spec>=SPEC_MAX
+                         ? (((frame>>2)&1)?"#fcfc58":"#fcfcfc") : "#3cbcfc");
+  ctx.fillStyle="#fff"; ctx.fillText("KI",kw+28,38);
+  // banana ammo, bottom-left: filled crescents are ready to throw
+  for(let i=0;i<BAN_MAX;i++){
+    const ready = i < BAN_MAX-bananasOut();
+    ctx.globalAlpha = ready ? 1 : 0.3;
+    drawBanana(8+i*14, VH-18, -0.5);
+    ctx.globalAlpha = 1;
+  }
+  ctx.fillStyle="#fff"; ctx.fillText("X",8+BAN_MAX*14+2,VH-9);
+  // dynamite ammo, to the right of the bananas
+  const dx0=8+BAN_MAX*14+14;
+  for(let i=0;i<DYN_MAX;i++){
+    ctx.globalAlpha = (i < DYN_MAX-dynOut()) ? 1 : 0.3;
+    drawDynamite(dx0+i*12, VH-24, {spin:0,fuse:DYN_FUSE});
+    ctx.globalAlpha = 1;
+  }
+  ctx.fillStyle="#fff"; ctx.fillText("C",dx0+DYN_MAX*12+2,VH-9);
+  // flight readout, only while Mario has his wings
+  if(mario.wings){
+    const bx=dx0+DYN_MAX*12+16, bw=54;
+    R(bx-1,VH-19,bw+2,8,"#000");
+    if(FLY_UNLIMITED){
+      // no budget to show — the bar just lights up while he is climbing
+      R(bx,VH-18,bw,6, mario.flying ? "#fcfcfc" : "#587858");
+      ctx.fillStyle="#fff"; ctx.fillText("FLY F",bx+bw+5,VH-12);
+    } else {
+      const fillW=Math.round(bw*mario.fly/FLY_RANGE);
+      if(fillW>0) R(bx,VH-18,fillW,6, mario.fly>FLY_RANGE*0.3 ? "#fcfcfc":"#fc9838");
+      ctx.fillStyle="#fff"; ctx.fillText("FLY",bx+bw+5,VH-12);
+    }
+  }
+  // umbrella, bottom-right: lit up while the canopy is open
+  ctx.globalAlpha = mario.umbT>0 ? 1 : 0.4;
+  drawUmbrellaIcon(204,VH-24,mario.umbT>0);
+  ctx.globalAlpha = 1;
+  ctx.fillStyle="#fff"; ctx.fillText("U",214,VH-9);
+  // tiny Mario head as the lives icon
+  R(56,9,8,2,"#d82800"); R(55,11,10,2,"#d82800");
+  R(57,13,6,3,"#fcb058"); R(57,13,2,2,"#7c3400"); R(61,14,2,2,"#000");
+}
+
+/* ---------------------------------------------------------------- driver */
+let acc=0, last=performance.now();
+function loop(now){
+  acc += now-last; last=now;
+  let steps=0;
+  while(acc >= 1000/60 && steps<4){ update(); acc-=1000/60; steps++; }
+  if(acc>200) acc=0;
+  render();
+  requestAnimationFrame(loop);
+}
+startLevel(true);
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

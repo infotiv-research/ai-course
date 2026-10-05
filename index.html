@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI course</title>
+<meta name="description" content="A one-day workshop on AI for engineers at INFOTIV: how models work underneath, and how to work with them.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  /* Layout: a navy hero with the title; below it, each section puts its heading in a
+     narrow left column and its content on the right, stacking to one column on phones. */
+  :root {
+    --bg: #f4f7f9;
+    --surface: #ffffff;
+    --fg: #13202c;
+    --muted: #536677;
+    --line: #d5dfe7;
+    --navy: #12324f;
+    --on-navy: #eef6fb;
+    --on-navy-muted: #a9c0d3;
+    --gold: #ffd166;
+    --accent: #1d5c8c;
+    --font-display: "Bricolage Grotesque", "Avenir Next", system-ui, sans-serif;
+    --font-body: "Instrument Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0c1721; --surface: #12202d; --fg: #e5edf3; --muted: #9db0c0; --line: #22364a;
+      --navy: #0a2236; --on-navy: #eef6fb; --on-navy-muted: #9fb6c9; --gold: #ffd166; --accent: #8cc4ef;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0c1721; --surface: #12202d; --fg: #e5edf3; --muted: #9db0c0; --line: #22364a;
+    --navy: #0a2236; --on-navy: #eef6fb; --on-navy-muted: #9fb6c9; --gold: #ffd166; --accent: #8cc4ef;
+    color-scheme: dark;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font: 400 1.0625rem/1.65 var(--font-body);
+  }
+  .wrap { max-width: 64rem; margin: 0 auto; padding-inline: 1.5rem; }
+
+  /* Hero */
+  .hero { background: var(--navy); color: var(--on-navy); padding-block: 4.5rem 3rem; }
+  .eyebrow {
+    font: 500 0.8rem/1 var(--font-mono);
+    letter-spacing: 0.1em; text-transform: uppercase; color: var(--gold);
+    margin: 0 0 1.25rem;
+  }
+  h1 {
+    font: 800 clamp(3.2rem, 11vw, 6.5rem)/0.95 var(--font-display);
+    letter-spacing: -0.03em; margin: 0; text-wrap: balance;
+  }
+  .subtitle { margin: 1.25rem 0 0; font: 500 clamp(1.15rem, 2.4vw, 1.5rem)/1.3 var(--font-display); color: var(--on-navy); }
+  .subtitle span {
+    margin-right: 0.5rem; font: 500 0.72rem/1 var(--font-mono); letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--on-navy-muted); vertical-align: 0.2em;
+  }
+  .facts {
+    display: grid; gap: 1.25rem 2rem; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+    margin: 0 0 1.5rem; padding: 0; list-style: none;
+  }
+  .facts li { display: grid; gap: 0.3rem; align-content: start; min-width: 0; }
+  .facts span {
+    font: 500 0.72rem/1 var(--font-mono); letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--muted);
+  }
+  .facts strong { font: 500 1.15rem/1.35 var(--font-display); }
+
+  /* Sections: heading on the left, content on the right */
+  main { padding-block: 1rem 4rem; }
+  section {
+    display: grid; gap: 1rem 3rem;
+    padding-block: 3.5rem; border-bottom: 1px solid var(--line);
+  }
+  section:last-child { border-bottom: 0; }
+  @media (min-width: 52rem) {
+    section { grid-template-columns: 13rem 1fr; }
+  }
+  section > * { min-width: 0; }
+  h2 {
+    font: 700 1.75rem/1.15 var(--font-display); letter-spacing: -0.01em;
+    margin: 0; text-wrap: balance;
+  }
+  p { margin: 0; max-width: 62ch; }
+
+  .why .body { display: grid; gap: 1.1rem; }
+  .why .lead {
+    font: 500 clamp(1.3rem, 2.6vw, 1.6rem)/1.4 var(--font-display);
+    letter-spacing: -0.01em; text-wrap: pretty;
+  }
+  .why p:not(.lead) { color: var(--muted); }
+
+  /* Agenda: one column, one row per session */
+  .agenda { list-style: none; margin: 0; padding: 0; }
+  .agenda > li {
+    display: grid; grid-template-columns: 2.75rem 1fr; gap: 0 0.75rem;
+    padding-block: 0.95rem; border-top: 1px solid var(--line);
+  }
+  .num {
+    font: 700 1.25rem/1.3 var(--font-display); color: var(--accent);
+    font-variant-numeric: tabular-nums;
+  }
+  /* Title and description share a line, separated by a dot */
+  .agenda h3 { display: inline; font: 600 1.05rem/1.35 var(--font-body); margin: 0; }
+  .agenda p { display: inline; color: var(--muted); font-size: 0.95rem; line-height: 1.5; }
+  .agenda p::before { content: "·"; margin: 0 0.45em; color: var(--muted); }
+  .agenda .tags { list-style: none; margin: 0.5rem 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.35rem; }
+  .agenda .tags li {
+    font: 500 0.72rem/1.2 var(--font-mono); letter-spacing: 0.02em; color: var(--accent);
+    background: var(--surface); border: 1px solid var(--line); border-radius: 999px;
+    padding: 0.2rem 0.55rem;
+  }
+
+  /* Demos: two media cards, side by side on wide screens */
+  .demos .intro { color: var(--muted); margin-bottom: 1.5rem; }
+  .demo-grid { display: grid; gap: 1.25rem; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); }
+  .demo {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+    overflow: hidden; min-width: 0; display: flex; flex-direction: column;
+  }
+  /* On wide screens with a mouse, the card under the pointer grows to the full width while the
+     other one shrinks and fades. Animating the column widths keeps the motion smooth. */
+  @media (hover: hover) and (min-width: 60rem) {
+    .demo-grid {
+      grid-template-columns: 1fr 1fr;
+      transition: grid-template-columns 0.45s ease, column-gap 0.45s ease;
+    }
+    .demo { transition: opacity 0.3s ease; }
+    .demo-grid:has(> .demo:first-child:hover) { grid-template-columns: 1fr 0fr; column-gap: 0; }
+    .demo-grid:has(> .demo:last-child:hover) { grid-template-columns: 0fr 1fr; column-gap: 0; }
+    /* contain: size stops the squeezed card's text from making the row taller as it narrows */
+    .demo-grid:has(> .demo:hover) > .demo:not(:hover) { opacity: 0; contain: size; border-width: 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .demo-grid, .demo { transition: none; }
+  }
+  .demo img, .demo video {
+    display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; background: var(--navy);
+  }
+  .demo .text { padding: 1.15rem 1.3rem 1.3rem; display: grid; gap: 0.5rem; }
+  .demo h3 { font: 700 1.15rem/1.3 var(--font-display); margin: 0; }
+  .demo p { color: var(--muted); font-size: 0.95rem; line-height: 1.5; }
+  .demo .links { display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; margin-top: 0.25rem; }
+  .demo .links a {
+    color: var(--accent); font: 500 0.8rem/1.4 var(--font-mono); letter-spacing: 0.04em;
+    text-decoration: none; border-bottom: 1px solid currentColor;
+  }
+
+  /* What to bring */
+  .bring { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); }
+  .bring div {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+    padding: 1.25rem 1.4rem; min-width: 0;
+  }
+  .bring h3 { font: 700 1.15rem/1.3 var(--font-display); margin: 0 0 0.35rem; }
+  .bring p { color: var(--muted); font-size: 0.97rem; }
+  .bring .with-icon { display: flex; align-items: center; gap: 1rem; }
+  .bring .with-icon > div { padding: 0; border: 0; background: none; }
+  .bring .icon {
+    flex: none; display: grid; place-items: center; width: 4.5rem; height: 4.5rem;
+    border-radius: 8px; background: var(--bg); color: var(--accent);
+  }
+  .bring .icon svg { width: 2.4rem; height: 2.4rem; }
+
+  footer {
+    border-top: 1px solid var(--line); padding-block: 1.75rem 2.75rem;
+    color: var(--muted); font: 400 0.85rem/1.4 var(--font-mono);
+  }
+
+  .footer-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+  .logo { display: block; height: 2rem; width: auto; }
+
+  a { color: inherit; }
+  a:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <p class="eyebrow">INFOTIV · one-day workshop</p>
+    <h1>AI course</h1>
+    <p class="subtitle"><span>Instructor</span> Hamid Ebadi</p>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="why" aria-labelledby="why">
+    <h2 id="why">Why</h2>
+    <div class="body">
+    <p class="lead">AI has changed how digital content gets made, from books and software to games and video. This is a hands-on workshop, not a lecture. It is not about the shiniest tools but about how they work underneath, so that you can build with them on purpose instead of by luck.</p>
+    <p>Why does a language model make things up? Why can it not count the r’s in “strawberry” or add two numbers, yet still beat artists, programmers and mathematicians at their own benchmarks? We look at these weaknesses and at how engineers work around them. We start by training a tiny neural network by hand, then move on to large language models and how to work with them: writing a spec an agent can follow, giving it rules and brakes, running it on real code and checking what it did. There are no magic prompts. The goal is to learn enough to move from vibe coding to agentic engineering.</p>
+    </div>
+  </section>
+
+  <section class="demos" aria-labelledby="demos">
+    <h2 id="demos">Demos</h2>
+    <div>
+    <p class="intro">Both were made by an AI agent, with no code written by hand, and they look finished. The workshop is about turning work like this into something you can trust and maintain.</p>
+    <div class="demo-grid">
+      <article class="demo">
+        <video src="robotarm-glass-liftlow/robotarm_glass_liftlow_audio.mp4" autoplay controls loop muted playsinline aria-label="A white robot arm lifts the glass O out of the INFOTIV logo, spins it and sets it back, while an AI course sign drops in on two strings"></video>
+        <div class="text">
+          <h3>3D modelling and video creation</h3>
+          <p>The scene, the motion and the soundtrack are all generated from code an agent wrote.</p>
+        </div>
+      </article>
+      <article class="demo">
+        <a href="mario-game/mario.html"><img src="mario-game/arsenal.png" alt="The vibe-coded Mario level, with Mario using a banana, dynamite, wings, an umbrella and a laser beam against bomber planes" loading="lazy"></a>
+        <div class="text">
+          <h3>Super Mario++</h3>
+          <p>The classic World 1-1, plus new weapons (banana boomerang, dynamite, laser beam), wings, an umbrella and a new enemy: bomber planes.</p>
+          <div class="links"><a href="mario-game/mario.html">Play it</a></div>
+        </div>
+      </article>
+    </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="agenda">
+    <h2 id="agenda">Agenda</h2>
+    <ol class="agenda">
+      <li><span class="num">01</span><div><h3>Intro</h3><p>What this day is, and what it is not.</p><ul class="tags"><li>Mario demo</li><li>Human + AI</li><li>From luck to repeatable</li><li>How we work today</li></ul></div></li>
+      <li><span class="num">02</span><div><h3>Inside the box</h3><p>AI, ML and deep learning. We train a tiny neural network by hand.</p><ul class="tags"><li>Machine learning</li><li>Neural networks</li><li>Deep learning</li><li>CNN</li><li>RNN</li><li>Diffusion</li><li>Multimodal</li></ul></div></li>
+      <li><span class="num">03</span><div><h3>Language models</h3><p>How a model reads text and writes the next word.</p><ul class="tags"><li>Embeddings</li><li>Tokens</li><li>Transformer</li><li>Temperature</li><li>Context window</li><li>Fine-tuning</li></ul></div></li>
+      <li><span class="num">04</span><div><h3>Working with the model</h3><p>Prompting and writing a spec it can follow.</p><ul class="tags"><li>Vibe coding</li><li>Prompt engineering</li><li>Chain prompting</li><li>Goal, boundaries, checks</li></ul></div></li>
+      <li><span class="num">05</span><div><h3>Harness, tools and agents</h3><p>Giving the model hands.</p><ul class="tags"><li>Agents</li><li>Tool calling</li><li>Claude Code</li><li>MCP</li><li>Skills</li><li>CLI</li></ul></div></li>
+      <li><span class="num">06</span><div><h3>Context engineering and memory</h3><p>What to put in front of the model, and what to leave out.</p><ul class="tags"><li>Context rot</li><li>Memory</li><li>RAG</li><li>OpenRouter</li></ul></div></li>
+      <li><span class="num">07</span><div><h3>Security and brakes</h3><p>Sandboxes, credentials and poisoned text.</p><ul class="tags"><li>Sandboxes</li><li>Prompt injection</li></ul></div></li>
+      <li><span class="num">08</span><div><h3>Limits, failures and verification</h3><p>Making things up, bias, tests, review and knowing whether the output is any good.</p><ul class="tags"><li>Hallucination</li><li>Bias</li><li>AI slop</li><li>Testing</li><li>Benchmarks</li></ul></div></li>
+      <li><span class="num">09</span><div><h3>Ethics, law and obligations</h3><p>Real incidents, the EU AI Act and who is responsible.</p><ul class="tags"><li>Misalignment</li><li>Real incidents</li><li>EU AI Act</li><li>Standards</li></ul></div></li>
+      <li><span class="num">10</span><div><h3>Models, cost and running locally</h3><p>What you pay for, and running a model yourself.</p><ul class="tags"><li>Token cost</li><li>Open vs closed</li><li>Local models</li><li>Quantization</li></ul></div></li>
+    </ol>
+  </section>
+
+  <section aria-labelledby="bring">
+    <h2 id="bring">Practical details</h2>
+    <div>
+      <ul class="facts">
+        <li><span>When</span><strong>Thursday 26 November</strong></li>
+        <li><span>Time</span><strong>09:00 to 16:00</strong></li>
+        <li><span>Where</span><strong>Oceanen meeting room<br>INFOTIV<br>Västra Hamngatan 8<br>411 17 Göteborg</strong></li>
+      </ul>
+    <div class="bring">
+      <div class="with-icon">
+        <span class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M10.5 5h3"/><path d="M11 18.5h2"/></svg></span>
+        <div><h3>Bring your phone</h3><p>You use it to answer quiz questions throughout the day.</p></div>
+      </div>
+    </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap footer-row">
+    <span>Hamid Ebadi, INFOTIV AB</span>
+    <img class="logo" src="../images_others/infotiv-logo.svg" alt="INFOTIV" width="504" height="172">
+  </div>
+</footer>
+</body>
+</html>

@@ -1,0 +1,27 @@
+
+--- prompts, session of 2026-08-13 (verbatim, in order) ---
+
+code the whole first level of the first super mario game
+
+
+--- prompts, session of 2026-08-21 (verbatim, in order) ---
+
+can you create a new version of mario in which it throw bananas like a bomerang to kill the enemies when the key X is pressed. save it as mario2.html
+
+I want another key that when I press it throw a exploiting dynamits . It should go up and come and explodes
+
+What other crazy feature I can add to show the power of claude to students in agentic engineering course ?
+
+add flying mode in which the a bird comes and pick mario and he can from for a full screen
+
+add flying mode in which the a mario grow a wing and he can fly for a full screen
+
+I want the fly to stay longer and be valid until I hold the "f" botton
+
+--- prompts, session of 2026-08-25 (verbatim, in order) ---
+
+I want a new typoe of enemy, this enemy is an airplane the through bombs and maria can protect himself by using its umbrella by pressing another key
+
+I want mario to have a special gesture  like the one in mortal combat in which characters like Sub-Zero (who uses ice blasts) or characters with energy/laser projectiles that destroy enemies in the same horizantal
+
+Can you create a visual image to explain the game and all the weapons in action
