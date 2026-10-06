@@ -58,3 +58,11 @@ The constants sit next to the code they drive, near the top of each section:
 the banana, `DYN_*` for dynamite, `FLY_*` for the wings (set `FLY_UNLIMITED`
 to `false` for a metered version), `PLANE_*` and `BOMB_*` for the bombers,
 `UMB_*` for the umbrella, and `SPEC_*` / `BEAM_*` for the special.
+
+## Feature video
+
+`features.mp4` shows each new feature in action, recorded from the real game
+rather than mocked up. `video/build.sh` rebuilds it: headless Chromium steps the
+game frame by frame through the scenes in `video/scenes.mjs`, and
+`video/compose.py` puts the feature list beside the picture. Re-run it after
+changing the game so the video stays true to it.
