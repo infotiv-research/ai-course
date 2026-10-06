@@ -25,7 +25,7 @@
     grab the <b>wings</b>, then <b>hold F</b> to fly &mdash; as long as you hold it<br>
     bombers overhead? <b>hold U</b> (or <b>E</b>) for the <b>umbrella</b> &mdash; it swats
     their bombs away and doubles as a parachute<br>
-    special: <b>&darr;</b> then <b>&larr;/&rarr;</b> then <b>B</b> &mdash; an energy beam that
+    <b>L</b> fires the laser &mdash; an energy beam that
     clears everything on that line (needs a full <b>KI</b> meter)
   </div>
 </div>
@@ -61,10 +61,8 @@
    open canopy doubles as a parachute.  Both hands are on the handle while it
    is up, so no running and nothing to throw.  Jump on a plane to down it.
 
-   And he has a special, entered as a fighting-game motion rather than on a
-   button of its own: tap down, then the way he should fire, then B — the
-   same Down-Forward-Punch that freezes people in Mortal Kombat.  He plants
-   his feet, gathers a ball of light in both hands and lets go a beam that
+   And he has a special: press L to fire his laser the way he is facing.
+   He plants his feet, gathers a ball of light in both hands and lets go a beam that
    crosses the screen and destroys every enemy on that horizontal line, with
    the score climbing for each one it takes.  It costs the whole KI meter
    under the score, which refills over about five seconds.
@@ -856,7 +854,7 @@ const MAP = {
   ArrowDown:"down", KeyS:"down", ArrowUp:"jump", KeyW:"jump",
   Space:"jump", KeyK:"jump", ShiftLeft:"run", ShiftRight:"run",
   KeyZ:"run", KeyJ:"run", KeyX:"banana", KeyC:"dyn", KeyF:"fly",
-  KeyU:"umbrella", KeyE:"umbrella", KeyB:"blast", KeyR:"restart"
+  KeyU:"umbrella", KeyE:"umbrella", KeyL:"laser", KeyR:"restart"
 };
 addEventListener("keydown",e=>{
   const k=MAP[e.code]; if(!k) return;
@@ -894,7 +892,6 @@ function startLevel(hard){
   mario = newMario(2.5*T, 12*T-15, keepPower);
   ents=[]; bumps=[]; shards=[]; floats=[]; shake=0;
   timeLeft=400; timeAcc=0; state="play"; stateT=0;
-  motion.step=0;
   flagY = 4*T; pipeAnim=null;
   if(hard){ score=0; coins=0; lives=3; }
 }
@@ -1400,11 +1397,7 @@ function blast(cx,cy,radius,selfHurt){
 }
 
 /* --------------------------------------------------------- the special */
-/* Sub-Zero's freeze in Mortal Kombat is Down, Forward, Punch, and Mario's
-   beam is entered the same way: tap down, then the way he should fire, then
-   B.  Each step has to land within SPEC_WIN frames of the one before it, so
-   it reads as one motion rather than three separate presses. */
-const SPEC_WIN  = 22;
+/* One key, L, fires the beam the way Mario is facing. */
 const SPEC_MAX  = 100;    // a full meter buys exactly one beam
 const SPEC_GAIN = 0.34;   // ...and takes about five seconds to come back
 const CAST_WIND = 14;     // frames of gathering light before it goes off
@@ -1414,19 +1407,9 @@ const BEAM_LIFE = 26;
 const BEAM_H    = 12;     // the height of the band it clears
 const BEAM_PTS  = [200,400,800,1000,2000,4000,8000];
 
-const motion = {step:0, t:0, dir:1};
-function feedMotion(){
-  if(motion.step && ++motion.t>SPEC_WIN) motion.step=0;    // too slow, forget it
-  if(pressed.down){ motion.step=1; motion.t=0; }
-  else if(motion.step===1 && (pressed.left||pressed.right)){
-    motion.step=2; motion.t=0; motion.dir = pressed.right?1:-1;
-  }
-}
-function motionArmed(){ return motion.step===2; }
-
 function startCast(m,dir){
   m.cast=CAST_WIND+CAST_HOLD; m.face=dir; m.spec=0; m.vx=0;
-  motion.step=0; SFX.charge();
+  SFX.charge();
 }
 
 function fireBeam(m){
@@ -1608,9 +1591,8 @@ function updateMario(){
   if(m.inv>0) m.inv--;
   if(m.fire>0) m.fire--;
 
-  // the special: the motion buffer ticks every frame, the beam leaves his
-  // hands partway through the cast, and the meter refills the rest of the time
-  feedMotion();
+  // the special: the beam leaves his hands partway through the cast, and the
+  // meter refills the rest of the time
   if(m.cast>0 && --m.cast===CAST_HOLD) fireBeam(m);
   const casting = m.cast>0;
   if(!casting && m.spec<SPEC_MAX) m.spec=Math.min(SPEC_MAX,m.spec+SPEC_GAIN);
@@ -1673,9 +1655,9 @@ function updateMario(){
   if(m.dyn>0) m.dyn--;
   if(pressed.dyn && !m.dyn && !umb && !casting) throwDynamite();
 
-  // special: down, forward, B — with a full meter and both hands free
-  if(!casting && !umb && pressed.blast && motionArmed() && m.spec>=SPEC_MAX)
-    startCast(m,motion.dir);
+  // special: L — with a full meter and both hands free
+  if(!casting && !umb && pressed.laser && m.spec>=SPEC_MAX)
+    startCast(m,m.face);
 
   // pipes
   if(tryWarpDown()) return;
@@ -1871,7 +1853,7 @@ function update(){
 
   pressed.jump=pressed.run=pressed.down=pressed.left=pressed.right=false;
   pressed.banana=pressed.dyn=pressed.fly=false;
-  pressed.umbrella=pressed.blast=false;
+  pressed.umbrella=pressed.laser=false;
 }
 
 /* ---------------------------------------------------------------- render */

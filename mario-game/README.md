@@ -24,7 +24,7 @@ Open `mario.html` in a browser. That's all there is to it.
 | `C` | lob a stick of dynamite |
 | `F` | hold to fly, once you have the wings |
 | `U` (or `E`) | hold to raise the umbrella |
-| `↓` then `←`/`→` then `B` | the special |
+| `L` | fire the laser |
 | `R` | restart |
 
 ## What was added to 1-1
@@ -46,11 +46,10 @@ Open `mario.html` in a browser. That's all there is to it.
   becomes Mario's: its blast spares him and takes enemies with it. The open
   canopy also works as a parachute. Both hands are on the handle, so no
   running and nothing to throw while it is up.
-- **The special** (`↓`, forward, `B`) — entered as a fighting-game motion, the
-  same Down-Forward-Punch that freezes people in Mortal Kombat. Mario plants
-  his feet, gathers a ball of light and fires a beam across the screen that
-  destroys every enemy on that horizontal line. It costs the whole KI meter
-  under the score, which refills over about five seconds.
+- **The special** (`L`) — fires the way Mario is facing. He plants his feet,
+  gathers a ball of light and fires a beam across the screen that destroys
+  every enemy on that horizontal line. It costs the whole KI meter under the
+  score, which refills over about five seconds.
 
 ## Tuning
 
