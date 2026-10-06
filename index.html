@@ -162,6 +162,16 @@
     color: var(--accent); font: 500 0.8rem/1.4 var(--font-mono); letter-spacing: 0.04em;
     text-decoration: none; border-bottom: 1px solid currentColor;
   }
+  /* A link that looks like a button: it opens another page, so it stays an <a> */
+  .demo .links a.button {
+    display: inline-flex; align-items: center; gap: 0.5rem;
+    padding: 0.55rem 1.1rem; border: 0; border-radius: 999px;
+    background: var(--accent); color: var(--bg);
+    font: 600 0.95rem/1 var(--font-body); letter-spacing: 0;
+    transition: filter 0.15s ease;
+  }
+  .demo .links a.button:hover { filter: brightness(1.12); }
+  .demo .links a.button svg { width: 0.8rem; height: 0.8rem; }
 
   /* What to bring */
   .bring { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); }
@@ -248,14 +258,13 @@
     <h2 id="why">Why</h2>
     <div class="body">
     <p class="lead">AI has changed how digital content gets made, from books and software to games and video. This workshop is not about the shiniest tools, which go out of date within months. It is about how they work underneath, knowledge that stays true as the tools change, so that you can build with them on purpose instead of by luck.</p>
-    <p>Why does a language model make things up? Computers are advanced calculators, and large language models follow grammar rules better than most of us. So why is it that LLMs on their own <strong>cannot</strong> count the r’s in “strawberry” or add two large numbers, yet still beat artists, programmers and mathematicians at their own benchmarks? We look at these weaknesses and at how engineers work around them. We start by training a tiny neural network by hand, then move on to large language models and how to work with them: writing a spec an agent can follow, giving it rules and brakes, running it on real code and checking what it did. There are no magic prompts. The goal is to learn enough to move from vibe coding to agentic engineering.</p>
+    <p>Why does a language model make things up? Computers are advanced calculators, and large language models follow grammar rules better than most of us. So why is it that LLMs on their own cannot count the r’s in “strawberry” or add two large numbers, yet still beat artists, programmers and mathematicians at their own benchmarks? We look at these weaknesses and at how engineers work around them. We start by training a tiny neural network by hand, then move on to large language models and how to work with them: writing a spec an agent can follow, giving it rules and brakes, running it on real code and checking what it did. There are no magic prompts. The goal is to learn enough to move from vibe coding to agentic engineering.</p>
     </div>
   </section>
 
   <section class="who" aria-labelledby="who">
     <h2 id="who">Who</h2>
     <div class="body">
-    <p>For people who build, test or are responsible for software:</p>
     <ul class="audience">
       <li>Developers</li>
       <li>Testers and QA engineers</li>
@@ -283,7 +292,7 @@
           <h3>Super Mario++</h3>
           <p>The classic World 1-1, plus new weapons (banana boomerang, dynamite, laser beam), wings, an umbrella and a new enemy: bomber planes.</p>
           <p class="keys">New keys: <kbd>X</kbd> <kbd>C</kbd> <kbd>F</kbd> <kbd>U</kbd> <kbd>L</kbd></p>
-          <div class="links"><a href="mario-game/mario.html">Play it</a></div>
+          <div class="links"><a class="button" href="mario-game/mario.html"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 1.2v9.6L10.5 6z" fill="currentColor"/></svg>Play it</a></div>
         </div>
       </article>
     </div>
