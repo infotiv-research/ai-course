@@ -10,23 +10,36 @@
     align-items:center;justify-content:center;gap:10px}
   canvas{image-rendering:pixelated;image-rendering:crisp-edges;
     background:#5c94fc;box-shadow:0 0 0 3px #222,0 8px 40px #000}
-  #help{opacity:.55;text-align:center;letter-spacing:.5px}
-  b{color:#fc9838}
+  #help{display:grid;gap:6px;justify-items:center}
+  #help ul{display:flex;flex-wrap:wrap;justify-content:center;gap:4px 16px;
+    margin:0;padding:0;list-style:none}
+  #help li{color:#bbb;white-space:nowrap}
+  #help .tag{color:#777;letter-spacing:1px;margin-right:2px}
+  kbd{display:inline-block;min-width:12px;margin-right:5px;padding:1px 6px;
+    font:bold 12px/16px "Courier New",monospace;color:#fc9838;text-align:center;
+    background:#1a1a1a;border:1px solid #444;border-bottom-width:3px;border-radius:4px}
 </style>
 </head>
 <body>
 <div id="wrap">
   <canvas id="c" width="256" height="240"></canvas>
   <div id="help">
-    <b>&larr; &rarr;</b> move &nbsp; <b>Space / &uarr;</b> jump &nbsp;
-    <b>Shift / Z</b> run &amp; fireball &nbsp; <b>X</b> throw banana &nbsp;
-    <b>C</b> lob dynamite &nbsp; <b>&darr;</b> crouch / enter pipe &nbsp;
-    <b>R</b> restart<br>
-    grab the <b>wings</b>, then <b>hold F</b> to fly &mdash; as long as you hold it<br>
-    bombers overhead? <b>hold U</b> (or <b>E</b>) for the <b>umbrella</b> &mdash; it swats
-    their bombs away and doubles as a parachute<br>
-    <b>L</b> fires the laser &mdash; an energy beam that
-    clears everything on that line (needs a full <b>KI</b> meter)
+    <ul>
+      <li class="tag">BASICS</li>
+      <li><kbd>&larr;</kbd><kbd>&rarr;</kbd>move</li>
+      <li><kbd>Space</kbd>jump</li>
+      <li><kbd>Shift</kbd>run &amp; fireball</li>
+      <li><kbd>&darr;</kbd>crouch / pipe</li>
+      <li><kbd>R</kbd>restart</li>
+    </ul>
+    <ul>
+      <li class="tag">NEW</li>
+      <li><kbd>X</kbd>banana</li>
+      <li><kbd>C</kbd>dynamite</li>
+      <li><kbd>F</kbd>fly (hold, after wings)</li>
+      <li><kbd>U</kbd>umbrella (hold)</li>
+      <li><kbd>L</kbd>laser (full KI)</li>
+    </ul>
   </div>
 </div>
 <script>
