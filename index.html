@@ -90,12 +90,14 @@
   }
   p { margin: 0; max-width: 62ch; }
 
-  .why .body { display: grid; gap: 1.1rem; }
+  .why .body, .who .body { display: grid; gap: 1.1rem; }
   .why .lead {
     font: 500 clamp(1.3rem, 2.6vw, 1.6rem)/1.4 var(--font-display);
     letter-spacing: -0.01em; text-wrap: pretty;
   }
-  .why p:not(.lead) { color: var(--muted); }
+  .why p:not(.lead), .who p { color: var(--muted); }
+  .audience { margin: 0; padding-left: 1.25rem; max-width: 62ch; display: grid; gap: 0.4rem; }
+  .audience li { font: 500 1.05rem/1.4 var(--font-body); }
 
   /* Agenda: one column, one row per session */
   .agenda { list-style: none; margin: 0; padding: 0; }
@@ -147,6 +149,11 @@
   .demo .text { padding: 1.15rem 1.3rem 1.3rem; display: grid; gap: 0.5rem; }
   .demo h3 { font: 700 1.15rem/1.3 var(--font-display); margin: 0; }
   .demo p { color: var(--muted); font-size: 0.95rem; line-height: 1.5; }
+  .demo .keys kbd {
+    font: 500 0.78rem/1 var(--font-mono); color: var(--fg);
+    background: var(--surface); border: 1px solid var(--line); border-bottom-width: 2px;
+    border-radius: 4px; padding: 0.15rem 0.4rem; margin-left: 0.2rem;
+  }
   .demo .links { display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; margin-top: 0.25rem; }
   .demo .links a {
     color: var(--accent); font: 500 0.8rem/1.4 var(--font-mono); letter-spacing: 0.04em;
@@ -200,10 +207,23 @@
     </div>
   </section>
 
+  <section class="who" aria-labelledby="who">
+    <h2 id="who">Who</h2>
+    <div class="body">
+    <p>For people who build, test or are responsible for software:</p>
+    <ul class="audience">
+      <li>Developers</li>
+      <li>Testers and QA engineers</li>
+      <li>Engineers in safety-critical and regulated domains</li>
+      <li>Tech leads and engineering managers</li>
+    </ul>
+    </div>
+  </section>
+
   <section class="demos" aria-labelledby="demos">
     <h2 id="demos">Demos</h2>
     <div>
-    <p class="intro">Both were made by an AI agent, with no code written by hand, and they look finished. The workshop is about turning work like this into something you can trust and maintain.</p>
+    <p class="intro">Both demos, and this page itself, were vibe coded: an AI agent wrote all the code, none of it was written by hand, and they look finished. The workshop is about turning work like this into something you can trust and maintain.</p>
     <div class="demo-grid">
       <article class="demo">
         <video src="robotarm-glass-liftlow/robotarm_glass_liftlow_audio.mp4" autoplay controls loop muted playsinline aria-label="A white robot arm lifts the glass O out of the INFOTIV logo, spins it and sets it back, while an AI course sign drops in on two strings"></video>
@@ -217,6 +237,7 @@
         <div class="text">
           <h3>Super Mario++</h3>
           <p>The classic World 1-1, plus new weapons (banana boomerang, dynamite, laser beam), wings, an umbrella and a new enemy: bomber planes.</p>
+          <p class="keys">New keys: <kbd>X</kbd> <kbd>C</kbd> <kbd>F</kbd> <kbd>U</kbd> <kbd>L</kbd></p>
           <div class="links"><a href="mario-game/mario.html">Play it</a></div>
         </div>
       </article>
