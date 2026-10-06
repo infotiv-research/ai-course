@@ -127,14 +127,17 @@
     background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
     overflow: hidden; min-width: 0; display: flex; flex-direction: column;
   }
-  /* On wide screens with a mouse, the card under the pointer grows to the full width while the
-     other one shrinks and fades. Animating the column widths keeps the motion smooth. */
+  /* On wide screens with a mouse, the card under the pointer grows to the full page width,
+     reaching out under the section heading, while the other one shrinks and fades.
+     Animating the column widths and the left margin keeps the motion smooth. */
   @media (hover: hover) and (min-width: 60rem) {
     .demo-grid {
       grid-template-columns: 1fr 1fr;
-      transition: grid-template-columns 0.45s ease, column-gap 0.45s ease;
+      transition: grid-template-columns 0.45s ease, column-gap 0.45s ease, margin-left 0.45s ease;
     }
     .demo { transition: opacity 0.3s ease; }
+    /* 13rem heading column + 3rem column gap, from the section grid */
+    .demo-grid:has(> .demo:hover) { margin-left: -16rem; }
     .demo-grid:has(> .demo:first-child:hover) { grid-template-columns: 1fr 0fr; column-gap: 0; }
     .demo-grid:has(> .demo:last-child:hover) { grid-template-columns: 0fr 1fr; column-gap: 0; }
     /* contain: size stops the squeezed card's text from making the row taller as it narrows */
